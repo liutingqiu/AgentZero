@@ -1,0 +1,21 @@
+# 零 项目源码
+# 排除测试、日志、缓存、数据文件
+__pycache__/
+*.pyc
+data/
+*.db
+*.sqlite
+*.sqlite3
+tests/
+*.log
+*.json
+gpt_logs/
+agent_logs/
+reports/
+sandbox/
+.cache/
+.reasonix/
+*.tmp
+*.bak
+session_state.json
+behavior_fingerprint.json
