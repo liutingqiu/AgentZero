@@ -113,6 +113,17 @@ LLM_API_URL=https://api.deepseek.com/v1/chat/completions
 
 ---
 
+## 🐛 参与贡献
+
+发现 Bug 或有建议？欢迎 [提交 Issue](https://github.com/liutingqiu/zero/issues)。
+
+---
+
+> **Releases** = 打包好的稳定版本，别人下载 zip 就能用。
+> **Packages** = 发布到包管理器（如 pip），`pip install zero` 一键安装。零目前还没发。
+
+---
+
 ## License
 
 MIT © 柳橙
