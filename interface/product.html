@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>零 · v1</title>
+<style>
+:root {
+  --bg: #0d0d1a;
+  --surface: #16162a;
+  --card: #1e1e3a;
+  --border: #2a2a4a;
+  --text: #c8c8e0;
+  --dim: #6a6a8a;
+  --accent: #00d4aa;
+  --accent2: #4a9eff;
+  --danger: #ff5a7a;
+  --warn: #f0a040;
+  --radius: 12px;
+  --font: -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:var(--font); background:var(--bg); color:var(--text); height:100vh; display:flex; overflow:hidden; }
+
+/* Sidebar */
+.sidebar {
+  width:260px; background:var(--surface); border-right:1px solid var(--border);
+  display:flex; flex-direction:column; flex-shrink:0;
+}
+.sidebar-header { padding:16px; border-bottom:1px solid var(--border); }
+.sidebar-header h1 { font-size:20px; color:var(--accent); margin-bottom:10px; }
+.mode-toggle { display:flex; gap:4px; background:var(--card); border-radius:8px; padding:3px; }
+.mode-btn {
+  flex:1; padding:8px; border:none; border-radius:6px; cursor:pointer;
+  background:transparent; color:var(--dim); font-size:13px; transition:.2s;
+}
+.mode-btn.active { background:var(--accent); color:#000; font-weight:600; }
+.quick-tasks { padding:12px 16px; border-bottom:1px solid var(--border); }
+.quick-tasks h3 { font-size:11px; color:var(--dim); text-transform:uppercase; margin-bottom:8px; letter-spacing:1px; }
+.task-chip {
+  display:block; width:100%; padding:8px 12px; margin-bottom:4px;
+  background:var(--card); border:1px solid var(--border); border-radius:8px;
+  color:var(--text); font-size:13px; cursor:pointer; text-align:left; transition:.15s;
+}
+.task-chip:hover { border-color:var(--accent); background:#1a2a3a; }
+.history-list { flex:1; overflow-y:auto; padding:8px 12px; }
+.history-item {
+  padding:8px 10px; border-radius:6px; font-size:12px; color:var(--dim);
+  cursor:pointer; margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.history-item:hover { background:var(--card); color:var(--text); }
+
+/* Main */
+.main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+.toolbar {
+  padding:12px 20px; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; gap:12px;
+}
+.toolbar h2 { font-size:15px; font-weight:500; }
+.badge {
+  font-size:11px; padding:2px 8px; border-radius:10px; background:var(--card);
+  color:var(--accent);
+}
+.content { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:16px; }
+
+/* Chat bubbles */
+.msg { max-width:80%; padding:12px 16px; border-radius:var(--radius); font-size:14px; line-height:1.6; white-space:pre-wrap; word-break:break-word; }
+.msg.user { align-self:flex-end; background:var(--accent); color:#000; }
+.msg.zero { align-self:flex-start; background:var(--card); border:1px solid var(--border); }
+.msg pre { background:#00000040; padding:10px; border-radius:8px; overflow-x:auto; margin:8px 0; font-size:13px; }
+.msg code { font-family:'JetBrains Mono',monospace; font-size:13px; }
+
+/* Blackboard */
+.bb-card {
+  background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
+  padding:16px; margin-bottom:8px;
+}
+.bb-header { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+.bb-icon { font-size:20px; }
+.bb-role { font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:1px; }
+.bb-status { font-size:11px; padding:2px 8px; border-radius:8px; }
+.bb-status.pending { background:#ffffff10; color:var(--dim); }
+.bb-status.running { background:var(--accent2)20; color:var(--accent2); animation:pulse 1s infinite; }
+.bb-status.done { background:var(--accent)20; color:var(--accent); }
+.bb-status.failed { background:var(--danger)20; color:var(--danger); }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+.bb-output { font-size:13px; color:var(--dim); max-height:100px; overflow-y:auto; margin-top:8px; padding:8px; background:#00000030; border-radius:6px; }
+.bb-arrow { text-align:center; color:var(--dim); font-size:18px; margin:4px 0; }
+
+/* Input */
+.input-area { padding:16px 20px; border-top:1px solid var(--border); display:flex; gap:10px; }
+.input-area input {
+  flex:1; padding:12px 16px; background:var(--card); border:1px solid var(--border);
+  border-radius:var(--radius); color:var(--text); font-size:14px; outline:none;
+}
+.input-area input:focus { border-color:var(--accent); }
+.input-area button {
+  padding:12px 20px; background:var(--accent); color:#000; border:none;
+  border-radius:var(--radius); font-size:14px; font-weight:600; cursor:pointer;
+}
+.input-area button:disabled { opacity:.5; cursor:not-allowed; }
+
+/* Mobile */
+@media(max-width:768px) {
+  .sidebar { display:none; }
+  .msg { max-width:95%; }
+}
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="sidebar-header">
+    <h1>⚡ 零 v1</h1>
+    <div class="mode-toggle">
+      <button class="mode-btn active" onclick="switchMode('chat')">💬 聊天</button>
+      <button class="mode-btn" onclick="switchMode('work')">⚙️ 协作</button>
+    </div>
+  </div>
+  <div class="quick-tasks">
+    <h3>快速任务</h3>
+    <button class="task-chip" onclick="quickTask('写一个Python冒泡排序')">🔧 写排序算法</button>
+    <button class="task-chip" onclick="quickTask('帮我做一个响应式网站首页')">🌐 做网站首页</button>
+    <button class="task-chip" onclick="quickTask('分析为什么这段代码报错')">🔍 分析代码问题</button>
+    <button class="task-chip" onclick="quickTask('帮我搜索最新的AI Agent框架')">🔎 搜索AI框架</button>
+  </div>
+  <div class="history-list" id="history"></div>
+</div>
+
+<div class="main">
+  <div class="toolbar">
+    <h2 id="toolbarTitle">💬 聊天模式</h2>
+    <span class="badge" id="agentBadge">Reasonix</span>
+  </div>
+  <div class="content" id="content">
+    <div class="msg zero">你好主人~ 我是零 v1。<br>左侧切换聊天/协作模式，或使用快速任务按钮。</div>
+  </div>
+  <div class="input-area">
+    <input id="input" placeholder="输入任务，Enter发送..." onkeydown="if(event.key==='Enter')send()">
+    <button id="sendBtn" onclick="send()">发送</button>
+  </div>
+</div>
+
+<script>
+let mode = 'chat';
+let history = [];
+
+function switchMode(m) {
+  mode = m;
+  document.querySelectorAll('.mode-btn').forEach(b=>b.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('toolbarTitle').textContent = m==='chat'?'💬 聊天模式':'⚙️ 协作模式';
+  document.getElementById('content').innerHTML = m==='chat'
+    ? '<div class="msg zero">聊天模式——直接对话，快速响应。</div>'
+    : '<div class="msg zero">协作模式——多Agent拆解任务，逐步执行。</div>';
+}
+
+function quickTask(task) {
+  document.getElementById('input').value = task;
+  if (mode==='chat') switchMode('work');
+  send();
+}
+
+async function send() {
+  const input = document.getElementById('input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  input.disabled = true;
+  document.getElementById('sendBtn').disabled = true;
+
+  const c = document.getElementById('content');
+  c.innerHTML += `<div class="msg user">${esc(text)}</div>`;
+
+  if (mode === 'chat') {
+    // Chat mode
+    const r = await api('/api/chat', {message:text});
+    c.innerHTML += `<div class="msg zero">${md(r.reply||'无响应')}</div>`;
+  } else {
+    // Work mode — multi-agent
+    c.innerHTML += `<div class="msg zero">🤖 启动多Agent协作...</div>`;
+    const r = await api('/api/collab', {message:text, mode:'work'});
+    // Render blackboard
+    let html = '';
+    if (r.steps && r.steps.length) {
+      r.steps.forEach((s,i) => {
+        const icons = {pending:'⏳',running:'🔄',done:'✅',failed:'❌'};
+        const roles = s.action.includes('写')||s.action.includes('代码')?'executor':
+                      s.action.includes('规划')?'planner':'executor';
+        html += `<div class="bb-card">
+          <div class="bb-header">
+            <span class="bb-icon">${icons[s.status]||'❓'}</span>
+            <span class="bb-role">${roles.toUpperCase()}</span>
+            <span class="bb-status ${s.status}">${s.status}</span>
+            ${s.version_count>1?`<span style="font-size:11px;color:var(--dim)">v${s.version_count}</span>`:''}
+          </div>
+          <div style="font-size:13px">${esc(s.action)}</div>
+          ${s.output?`<div class="bb-output"><code>${esc(s.output)}</code></div>`:''}
+          ${s.critiques&&s.critiques.length?`<div style="font-size:11px;color:var(--warn);margin-top:4px">审查: ${s.critiques.map(c=>c?'✅':'❌').join(' ')}</div>`:''}
+        </div>`;
+        if (i<r.steps.length-1) html += '<div class="bb-arrow">↓</div>';
+      });
+    }
+    html += `<div class="msg zero"><strong>${r.status==='done'?'✅':'⚠️'} 最终结果</strong><br><br>${md(r.answer||'')}</div>`;
+    html += `<div style="font-size:11px;color:var(--dim);text-align:center">完成:${r.completed} 失败:${r.failed} 锚定:${r.grounded||0} 事件:${(r.events||{}).total||0}</div>`;
+    c.innerHTML += html;
+  }
+
+  // History
+  history.push({mode,text,time:new Date().toLocaleTimeString()});
+  renderHistory();
+
+  input.disabled = false;
+  document.getElementById('sendBtn').disabled = false;
+  c.scrollTop = c.scrollHeight;
+}
+
+async function api(path, data) {
+  const r = await fetch(path, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  return r.json();
+}
+
+function esc(s) { const d=document.createElement('div');d.textContent=s;return d.innerHTML; }
+function md(s) { return s.replace(/```(\w*)\n([\s\S]*?)```/g,'<pre><code>$2</code></pre>').replace(/\n/g,'<br>'); }
+
+function renderHistory() {
+  const h = document.getElementById('history');
+  h.innerHTML = history.slice(-20).map(e =>
+    `<div class="history-item" onclick="replay('${esc(e.text)}')" title="${esc(e.text)}">
+      ${e.mode==='work'?'⚙️':'💬'} ${esc(e.text).substring(0,40)}
+    </div>`
+  ).join('');
+}
+
+function replay(text) {
+  document.getElementById('input').value = text;
+  send();
+}
+</script>
+</body>
+</html>

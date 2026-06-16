@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agnes 聊天</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;background:#1a1a1a;color:#e0e0e0;display:flex;flex-direction:column;height:100vh}
+.header{padding:12px 20px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;gap:10px;flex-shrink:0}
+.header-dot{width:8px;height:8px;border-radius:50%;background:#fbbf24;animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}
+.header-title{font-size:14px;color:#d4d4d4}.header-sub{font-size:11px;color:#525252}
+.msgs{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:12px}
+.msgs::-webkit-scrollbar{width:6px}.msgs::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:3px}
+.msg{max-width:80%;padding:10px 14px;border-radius:12px;font-size:14px;line-height:1.6;word-wrap:break-word}
+.msg.user{align-self:flex-end;background:#2a2a2a;color:#e0e0e0}
+.msg.agnes{align-self:flex-start;background:#1e1e1e;border:1px solid #2a2a2a;color:#d4d4d4}
+.msg img{max-width:100%;border-radius:8px;margin:8px 0;cursor:pointer}
+.input-area{padding:12px 20px 16px;border-top:1px solid #2a2a2a;flex-shrink:0}
+.input-wrap{display:flex;gap:8px;align-items:flex-end}
+.input-wrap textarea{flex:1;background:#2a2a2a;border:1px solid #3a3a3a;color:#e0e0e0;border-radius:10px;padding:10px 14px;font-size:14px;font-family:inherit;resize:none;outline:none;line-height:1.5;max-height:120px}
+.input-wrap textarea:focus{border-color:#fbbf24}
+.btn{background:#fbbf24;color:#1a1a1a;border:none;padding:10px 18px;border-radius:10px;cursor:pointer;font-size:14px;font-weight:600;font-family:inherit;transition:background .15s;flex-shrink:0}
+.btn:hover{background:#f59e0b}.btn:disabled{background:#3a3a3a;color:#525252;cursor:not-allowed}
+.status{text-align:center;font-size:11px;color:#525252;margin-top:6px}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-dot"></div>
+  <div class="header-title">Agnes 2.0 Flash</div>
+  <div class="header-sub">· 免费模型</div>
+</div>
+<div class="msgs" id="msgs">
+  <div class="msg agnes">你好~ 我是 Agnes 2.0 Flash，免费 AI 助手。需要我做什么~</div>
+</div>
+<div class="input-area">
+  <div class="input-wrap">
+    <textarea id="inp" rows="1" placeholder="给 Agnes 发消息..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+    <button class="btn" id="sendBtn" onclick="send()">发送</button>
+  </div>
+  <div class="status">Agnes 2.0 Flash · 免费 · 由零驱动</div>
+</div>
+<script>
+let isSending = false;
+
+async function send() {
+  const inp = document.getElementById('inp');
+  const text = inp.value.trim();
+  if (!text || isSending) return;
+  isSending = true;
+  document.getElementById('sendBtn').disabled = true;
+
+  appendMsg('user', text);
+  inp.value = '';
+  inp.style.height = 'auto';
+
+  try {
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, agent_id: 'agnes_text' })
+    });
+    const d = await resp.json();
+    appendMsg('agnes', d.reply || '(无回复)');
+  } catch(e) {
+    appendMsg('agnes', '出错: ' + (e.message || e));
+  } finally {
+    isSending = false;
+    document.getElementById('sendBtn').disabled = false;
+    inp.focus();
+  }
+}
+
+function appendMsg(role, content) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.innerHTML = renderContent(content);
+  document.getElementById('msgs').appendChild(div);
+  document.getElementById('msgs').scrollTop = document.getElementById('msgs').scrollHeight;
+  // 图片绑定灯箱（复用主页灯箱）
+  div.querySelectorAll('img').forEach(function(img) {
+    img.addEventListener('click', function() {
+      if (window.parent.openLightbox) window.parent.openLightbox(img.src);
+      else window.open(img.src);
+    });
+  });
+}
+
+function renderContent(text) {
+  let html = String(text)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/```([\s\S]*?)```/g, function(_,c){ return '<pre><code>'+c.trim()+'</code></pre>'; })
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\n/g,'<br>')
+    .replace(/(https?:\/\/\S+?\.(?:png|jpe?g|gif|webp)(?:\?\S*)?)/gi, '<img src="$1" style="max-width:100%;border-radius:8px;margin:8px 0;cursor:pointer">');
+  return html;
+}
+</script>
+</body>
+</html>

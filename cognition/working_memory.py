@@ -9,7 +9,7 @@
   - 本次会话统计
 """
 
-import time, os
+import time, os, threading
 from datetime import datetime
 
 
@@ -21,32 +21,34 @@ class WorkingMemory:
     
     def __init__(self):
         self.session_start = datetime.now()
-        self.conversation = []        # [{'role':'user'|'zero', 'content':'...', 'time':'...'}]
+        self.conversation = []        # [{'role':'user'|'assistant', 'content':'...', 'time':'...'}]
         self.active_project = None    # 当前活跃项目名
         self.active_files = []        # 最近操作的文件列表
         self.messages_count = 0
         self.tasks_completed = 0
         self.owner_mood = 'normal'    # busy|normal|relaxed
         self.last_activity = time.time()
+        self._lock = threading.Lock()  # 保护并发写入
     
     # ── 对话管理 ──
     
     def add_message(self, role, content):
-        """记录一条对话"""
-        self.conversation.append({
-            'role': role,
-            'content': content,
-            'time': datetime.now().strftime('%H:%M:%S')
-        })
-        self.messages_count += 1
-        self.last_activity = time.time()
-        
-        # 推断情绪
-        self._infer_mood(content, role)
-        
-        # 保留最近 20 条
-        if len(self.conversation) > 20:
-            self.conversation = self.conversation[-20:]
+        """记录一条对话（线程安全）。"""
+        with self._lock:
+            self.conversation.append({
+                'role': role,
+                'content': content,
+                'time': datetime.now().strftime('%H:%M:%S')
+            })
+            self.messages_count += 1
+            self.last_activity = time.time()
+
+            # 推断情绪
+            self._infer_mood(content, role)
+
+            # 保留最近 20 条
+            if len(self.conversation) > 20:
+                self.conversation = self.conversation[-20:]
     
     def _infer_mood(self, content, role):
         """从消息内容推断主人情绪。
@@ -84,18 +86,21 @@ class WorkingMemory:
     # ── 项目追踪 ──
     
     def track_project(self, project_name):
-        """标记当前活跃项目"""
-        self.active_project = project_name
-    
+        """标记当前活跃项目（线程安全）。"""
+        with self._lock:
+            self.active_project = project_name
+
     def track_file(self, filepath):
-        """记录操作的文件"""
-        if filepath not in self.active_files:
-            self.active_files.append(filepath)
-        if len(self.active_files) > 10:
-            self.active_files = self.active_files[-10:]
-    
+        """记录操作的文件（线程安全）。"""
+        with self._lock:
+            if filepath not in self.active_files:
+                self.active_files.append(filepath)
+            if len(self.active_files) > 10:
+                self.active_files = self.active_files[-10:]
+
     def mark_task_done(self):
-        self.tasks_completed += 1
+        with self._lock:
+            self.tasks_completed += 1
     
     # ── 上下文导出 ──
     
@@ -154,13 +159,15 @@ class WorkingMemory:
                     messages_count=self.messages_count
                 )
             
-            # 写入今日状态
-            memory_manager.save_daily_state(
-                active_project=self.active_project or 'none',
-                files_modified=len(self.active_files),
-                messages_count=self.messages_count,
-                tasks_completed=self.tasks_completed,
-                mood=self.owner_mood
+            # 写入会话级摘要（save_daily_state 不存在，改用 save_task）
+            memory_manager.save_task(
+                task_id=f'session_{datetime.now().strftime("%Y%m%d_%H%M%S")}',
+                agent='zero',
+                task_type='session_summary',
+                input_summary=f'项目:{self.active_project or "none"} '
+                              f'情绪:{self.owner_mood}',
+                outcome='success',
+                tokens_used=self.messages_count,
             )
         except Exception as e:
             # v2: 异常恢复——写入备份文件

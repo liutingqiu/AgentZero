@@ -104,7 +104,10 @@ action = 需要查找文件、搜索信息、执行操作、检查状态
 只回复 chat 或 action。"""
     
     try:
-        result = llm_caller(system, text)
+        result = llm_caller(messages=[
+            {'role': 'system', 'content': system},
+            {'role': 'user', 'content': text},
+        ])
         result = result.strip().lower()
         
         if 'action' in result:
@@ -113,7 +116,7 @@ action = 需要查找文件、搜索信息、执行操作、检查状态
             return 'passive_chat', 0.85
         else:
             return 'passive_action', 0.5  # 无法解析 → 默认 action
-    except:
+    except Exception:
         return _rule_classify(text)
 
 

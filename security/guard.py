@@ -11,9 +11,25 @@ from datetime import datetime
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FINGERPRINT_FILE = os.path.join(BASE, 'data', 'behavior_fingerprint.json')
 SESSION_FILE = os.path.join(BASE, 'data', 'session_state.json')
+CONFIG_FILE = os.path.join(BASE, 'data', 'zero_config.json')
 
-# ── 用户体系 ──
-USERS = {'柳橙': {'role': 'owner', 'name': '主人'}}
+# ── 用户体系（从配置文件读取，默认关闭） ──
+def _load_auth_config():
+    """从 zero_config.json 读取认证配置。"""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+            auth = cfg.get('auth', {})
+            if auth.get('enabled') and auth.get('passphrase'):
+                return {
+                    auth['passphrase']: {'role': 'owner', 'name': '用户'},
+                }
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {}
+
+USERS = _load_auth_config()
 
 # ── 行为指纹 ──
 class BehaviorFingerprint:
@@ -168,6 +184,9 @@ class SessionManager:
             json.dump(self.state, f, ensure_ascii=False, indent=2)
     
     def is_unlocked(self):
+        # 认证关闭 → 始终放行
+        if not USERS:
+            return True
         if not self.state['unlocked']:
             return False
         elapsed = time.time() - self.state['unlocked_at']
@@ -181,6 +200,7 @@ class SessionManager:
     
     def lock(self):
         self.state['unlocked'] = False
+        self._save()
     
     def authenticate(self, code):
         now = time.time()

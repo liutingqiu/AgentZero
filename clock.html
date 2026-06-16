@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <title>磨砂玻璃 · 极简登录</title>
+  <!-- 引入 Google Material 图标 (仅作装饰) -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0,1" />
+  <style>
+    /* 全局重置 & 背景动态渐变 */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #1f1c2c, #928dab);
+      background-size: 400% 400%;
+      animation: gradientShift 18s ease infinite;
+      padding: 1.5rem;
+    }
+
+    /* 背景微动增强玻璃质感 */
+    @keyframes gradientShift {
+      0% { background-position: 0% 0%; }
+      50% { background-position: 100% 100%; }
+      100% { background-position: 0% 0%; }
+    }
+
+    /* ----- 磨砂玻璃卡片 (frosted glass) ----- */
+    .glass-card {
+      width: 100%;
+      max-width: 420px;
+      padding: 2.5rem 2rem 2rem 2rem;
+      border-radius: 40px;
+      
+      /* 核心磨砂效果 */
+      background: rgba(255, 255, 255, 0.18);
+      backdrop-filter: blur(18px) saturate(180%);
+      -webkit-backdrop-filter: blur(18px) saturate(180%);
+      
+      /* 精致玻璃边框 */
+      border: 1px solid rgba(255, 255, 255, 0.32);
+      box-shadow: 
+        0 30px 50px rgba(0, 0, 0, 0.25),
+        inset 0 1px 2px rgba(255, 255, 255, 0.6);
+      
+      color: #f0f3fa;
+      transition: transform 0.25s ease, box-shadow 0.3s ease;
+    }
+
+    .glass-card:hover {
+      transform: scale(1.01) translateY(-3px);
+      box-shadow: 0 40px 60px rgba(0, 0, 0, 0.35);
+    }
+
+    /* 内部容器微调 */
+    .glass-card h2 {
+      font-weight: 500;
+      letter-spacing: 1px;
+      text-align: center;
+      margin-bottom: 1.8rem;
+      font-size: 2rem;
+      text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+    }
+
+    .glass-card h2 .material-symbols-outlined {
+      font-size: 2.2rem;
+      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.2));
+    }
+
+    /* 表单组 */
+    .input-group {
+      margin-bottom: 1.6rem;
+      position: relative;
+    }
+
+    .input-group label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 450;
+      letter-spacing: 0.3px;
+      color: rgba(255, 255, 255, 0.85);
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+      font-size: 0.95rem;
+    }
+
+    .input-wrapper {
+      display: flex;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 60px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      transition: all 0.2s ease;
+      padding: 0 10px 0 18px;
+      backdrop-filter: blur(4px);
+    }
+
+    .input-wrapper:focus-within {
+      border-color: rgba(255, 255, 255, 0.7);
+      background: rgba(255, 255, 255, 0.14);
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
+    }
+
+    .input-wrapper .material-symbols-outlined {
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 1.4rem;
+      margin-right: 8px;
+      user-select: none;
+    }
+
+    .input-wrapper input {
+      width: 100%;
+      padding: 14px 10px 14px 4px;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: white;
+      font-size: 1rem;
+      font-weight: 400;
+    }
+
+    .input-wrapper input::placeholder {
+      color: rgba(255, 255, 255, 0.45);
+      font-weight: 300;
+      letter-spacing: 0.2px;
+    }
+
+    /* 密码可见切换按钮 (纯UI) */
+    .toggle-password {
+      background: none;
+      border: none;
+      color: rgba(255, 255, 255, 0.6);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 6px;
+      border-radius: 50%;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .toggle-password:hover {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
+
+    .toggle-password .material-symbols-outlined {
+      font-size: 1.3rem;
+      margin-right: 0;
+    }
+
+    /* 忘记密码 & 额外操作 */
+    .extra-options {
+      display: flex;
+      justify-content: flex-end;
+      margin: 0.5rem 0 1.8rem 0;
+    }
+
+    .extra-options a {
+      color: rgba(255, 255, 255, 0.75);
+      text-decoration: none;
+      font-size: 0.85rem;
+      border-bottom: 1px solid transparent;
+      transition: color 0.2s, border-color 0.2s;
+      letter-spacing: 0.3px;
+    }
+
+    .extra-options a:hover {
+      color: white;
+      border-bottom-color: rgba(255, 255, 255, 0.6);
+    }
+
+    /* 主按钮 — 也带轻微玻璃感 */
+    .glass-btn {
+      width: 100%;
+      padding: 15px 20px;
+      border: none;
+      border-radius: 60px;
+      background: rgba(255, 255, 255, 0.2);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      color: white;
+      font-size: 1.2rem;
+      font-weight: 500;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      margin-bottom: 1.5rem;
+    }
+
+    .glass-btn:hover {
+      background: rgba(255, 255, 255, 0.35);
+      border-color: rgba(255, 255, 255, 0.5);
+      transform: scale(1.02);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
+    }
+
+    .glass-btn:active {
+      transform: scale(0.98);
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    /* 消息提示 (磨砂小标签) */
+    .msg-area {
+      text-align: center;
+      min-height: 36px;
+      margin-top: 0.8rem;
+      font-weight: 400;
+      font

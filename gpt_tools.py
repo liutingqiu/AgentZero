@@ -6,7 +6,7 @@
 本质是一个最小化的 GPT-4o Agent Loop。
 
 用法:
-  python gpt_tools.py "审查 E:\project\tools\zero\action\tools.py"
+  python gpt_tools.py "审查 E:/project/tools/zero/action/tools.py"
   python gpt_tools.py "在E盘找环的小说文件"
   python gpt_tools.py "搜索 GitHub 上最好的 AI Agent 框架"
   python gpt_tools.py                    # 交互模式
@@ -21,7 +21,11 @@ sys.path.insert(0, BASE)
 from action.tools import execute, TOOLS as ZERO_TOOLS
 
 # ── GPT-4o API ──
-from secure_config import get_api_url, get_api_key
+try:
+    from secure_config import get_api_url, get_api_key  # noqa: WPS433
+except ImportError:
+    # secure_config 不存在时回退到 config 的环境变量/keyring
+    from config import get_api_url, get_api_key  # noqa: WPS440
 API_URL = get_api_url()
 API_KEY = get_api_key()
 
@@ -96,14 +100,31 @@ def run(task):
             print(f'  🔧 {tool_name}({json.dumps(args, ensure_ascii=False)[:80]})')
             result = execute(tool_name, args)
         else:
-            result = {'success': False, 'error': f'未知工具: {tool_name}'}
+            from utils.result import err, ErrorCode
+            result = err(ErrorCode.TOOL_NOT_FOUND, f'未知工具: {tool_name}')
         
         # 将工具结果回传给 GPT-4o
-        tool_output = json.dumps(result, ensure_ascii=False)[:2000]
+        tool_output = json.dumps(
+            result.to_dict() if hasattr(result, 'to_dict') else result,
+            ensure_ascii=False,
+        )[:2000]
         messages.append({'role': 'assistant', 'content': reply})
-        messages.append({'role': 'user', 'content': f'工具 {tool_name} 的执行结果:\n{tool_output}\n\n请继续。如果任务已完成，输出 action="done"。'})
-        
-        print(f'  {"✅" if result.get("success") else "❌"} {str(result.get("output", result.get("error", "")))[:100]}')
+        messages.append({'role': 'user', 'content': (
+            f'[tool:{tool_name}]\n{tool_output}\n[/tool]\n'
+            f'请继续。如果任务已完成，输出 action="done"。'
+        )})
+
+        # 兼容 Result 对象 (.ok/.data) 和旧 dict ({'success':...})
+        ok_flag = getattr(result, 'ok', False)
+        if hasattr(result, 'to_dict'):
+            d = result.to_dict()
+            preview = str(d.get('data', d.get('error', '')))
+        elif isinstance(result, dict):
+            preview = str(result.get('output', result.get('error', '')))
+        else:
+            preview = str(result)
+        data_preview = preview[:100]
+        print(f'  {"✅" if ok_flag else "❌"} {data_preview}')
     
     return '⚠️ 达到最大轮数，任务未完成'
 

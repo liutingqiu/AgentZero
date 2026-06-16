@@ -2,16 +2,20 @@
 =================
 Think → Act → Observe → Decide 循环。
 
-替代旧的 plan_then_execute。
-最多 3 轮。提前结束条件：目标达成、连续失败、轮次上限。
-
-用法:
-  loop = AgentLoop(llm_caller, tools_executor)
-  result = loop.run("e盘环的小说在哪")
+修复要点：
+  - JSON 解析：括号计数版 extract_first_json 替换贪婪正则，
+    避免 LLM 回复中包含多个 JSON 块时被吞掉工具调用
+  - 日志：用 get_logger 替代隐式 print
 """
 
-import json, re, time
+import json
+import time
 from datetime import datetime
+
+from config import get_logger
+from utils.json_helpers import extract_first_json
+
+logger = get_logger('zero.agent_loop')
 
 
 class AgentLoop:
@@ -74,42 +78,50 @@ web_search, web_fetch, sysmon, agent_status
 - 每次只用一个工具
 - 拿到结果后判断：还需要更多操作吗？还是可以结束了？
 - 用中文回复
-- 搜索文件时用简短的 pattern（如搜'环'而不是'环这本小说在哪'）"""
+- 搜索文件时用简短的 pattern（如搜'环'而不是'环这本小说在哪'）
+- 相同任务应给出相同结果，避免随机变异，输出稳定一致"""
         
         messages = [
             {'role': 'system', 'content': system},
             {'role': 'user', 'content': task[:500]}  # 截断超长任务描述
         ]
         
+        self._task = task
         steps = []
         consecutive_fails = 0
         
         for turn in range(self.max_turns):
             # ── Think ──
-            msgs = [{'role': m['role'], 'content': m['content'][:2000]} for m in messages]
-            llm_reply = self.llm('', json.dumps(msgs, ensure_ascii=False))
+            # 结构化传递：保留 role 结构，不再拍平成文本 blob
+            llm_reply = self.llm(messages=messages, task_text=self._task,
+                                 agent_id=getattr(self, '_agent_id', ''))
             
-            # 解析 LLM 回复
-            decision = {}
-            try:
-                json_match = re.search(r'\{[\s\S]*\}', llm_reply)
-                if json_match:
-                    decision = json.loads(json_match.group())
-            except json.JSONDecodeError:
-                pass
+            # 解析 LLM 回复（用括号计数版的 extract_first_json，
+            # 避免贪婪正则吞掉"一段自然语言+JSON+一段自然语言"的结构）
+            decision = extract_first_json(llm_reply) or {}
+            if not isinstance(decision, dict):
+                decision = {}
             
-            # v2: 非 JSON → 重试一次，不是直接返回（GPT-4o: 会掩盖工具调用错误）
+            # Bug B fix: 非 JSON → turn 0 重试一次；turn≥1 用 fallback parser
+            # 保护条件：回复需 ≥20 字符且不含工具名误判关键词，才接受为自然语言 done
             if not decision or 'action' not in decision:
                 if turn == 0:
                     messages.append({'role': 'assistant', 'content': llm_reply})
-                    messages.append({'role': 'user', 'content': '请输出合法JSON，格式: {"action": "done|"工具名", ...}'})
+                    messages.append({'role': 'user', 'content': '请输出合法JSON，格式: {"action": "done"|"工具名", ...}'})
                     continue
-                else:
+                # Fallback parser: 自然语言回复 → 当作 done（有保护门槛）
+                reply_text = (llm_reply or '').strip()
+                _error_keywords = ['error', '错误', '失败', 'exception', 'traceback']
+                if len(reply_text) >= 20 and not any(kw in reply_text.lower() for kw in _error_keywords):
                     return {
-                        'status': 'error',
-                        'reply': llm_reply[:500] if llm_reply else '无响应',
+                        'status': 'done', 'reply': reply_text[:2000],
                         'steps': steps, 'loops': turn + 1
                     }
+                return {
+                    'status': 'error',
+                    'reply': reply_text[:500] if reply_text else '无响应',
+                    'steps': steps, 'loops': turn + 1
+                }
             
             action = decision.get('action', '')
             
@@ -134,9 +146,10 @@ web_search, web_fetch, sysmon, agent_status
             }
             
             result = self.execute_tool(tool_name, args, timeout=30)
-            step['result'] = result
-            
-            if result.get('success'):
+            step['result'] = result.to_dict() if hasattr(result, 'to_dict') else result
+
+            # 兼容 Result 对象 (.ok) 和旧 dict ({'success': ...})
+            if getattr(result, 'ok', False):
                 consecutive_fails = 0
                 step['outcome'] = 'success'
             else:
@@ -146,16 +159,23 @@ web_search, web_fetch, sysmon, agent_status
             steps.append(step)
             
             # ── Observe: 结果回传 LLM ──
-            tool_output = json.dumps(result, ensure_ascii=False)[:1500]
+            tool_output = json.dumps(
+                result.to_dict() if hasattr(result, 'to_dict') else result,
+                ensure_ascii=False,
+            )[:1500]
             messages.append({'role': 'assistant', 'content': llm_reply[:1000]})
             messages.append({
                 'role': 'user',
-                'content': f'工具 {tool_name} 返回: {tool_output}\n\n请继续。完成则回复 action="done"。'
+                'content': (
+                    f'[tool:{tool_name}]\n{tool_output}\n[/tool]\n'
+                    f'请继续。完成则回复 action="done"。'
+                ),
             })
             
-            # v2: 控制 token 消耗——保留 system + 最近6条消息
-            if len(messages) > 8:
-                messages = [messages[0]] + messages[-7:]
+            # Bug C fix: 阈值 8→6，max_turns=3 时实际生效
+            # turn1 后 6 条消息，turn2 后 8 条，>6 在 turn2 触发截断
+            if len(messages) > 6:
+                messages = [messages[0]] + messages[-5:]
             
             # ── 提前终止 ──
             if consecutive_fails >= 2:

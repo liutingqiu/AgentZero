@@ -25,19 +25,24 @@ def daily_review(memory_manager):
     now = datetime.now()
     today = now.strftime('%Y-%m-%d')
     
-    # 统计过去 24h
-    stats = memory_manager.stats_recent(24)
+    # 统计（summary() 返回 total/success/failed/by_agent）
+    stats = memory_manager.summary()
     summaries = memory_manager.get_conversation_summaries(days=1, limit=20)
+    
+    total = stats.get('total', 0)
+    success = stats.get('success', 0)
+    failed = stats.get('failed', 0)
+    rate = round(success / total * 100, 1) if total > 0 else 0
     
     lines = [
         f'# 零 · 每日反思',
         f'> {now.strftime("%Y-%m-%d %H:%M")} 自动生成',
         '',
         '## 概览',
-        f'- 总任务: **{stats.get("total", 0)}**',
-        f'- 成功: **{stats.get("success", 0)}**',
-        f'- 失败: **{stats.get("failure", 0)}**',
-        f'- 成功率: **{stats.get("rate", 0)}%**',
+        f'- 总任务: **{total}**',
+        f'- 成功: **{success}**',
+        f'- 失败: **{failed}**',
+        f'- 成功率: **{rate}%**',
         '',
     ]
     
@@ -48,7 +53,7 @@ def daily_review(memory_manager):
         lines.append('| 模块 | 任务数 |')
         lines.append('|------|:--:|')
         for a in by_agent:
-            lines.append(f'| {a.get("agent","?")} | {a.get("cnt",0)} |')
+            lines.append(f'| {a.get("agent","?")} | {a.get("c",0)} |')
         lines.append('')
     
     # 对话摘要
@@ -80,22 +85,26 @@ def daily_review(memory_manager):
 
 def _period_stats(memory_manager, start_hour, end_hour):
     """统计特定时段的性能"""
-    # 简化：从最近24h数据中按agent过滤
-    stats = memory_manager.stats_recent(24)
+    stats = memory_manager.summary()
+    total = stats.get('total', 0)
+    success = stats.get('success', 0)
     return {
-        'total': stats.get('total', 0),
-        'rate': stats.get('rate', 0),
+        'total': total,
+        'rate': round(success / total * 100, 1) if total > 0 else 0,
     }
 
 
 def extract_lessons(memory_manager):
     """从失败任务中提取经验教训"""
-    failures = memory_manager.query_tasks(outcome='failure', days=7, limit=20)
+    # 使用 get_recent_tasks 获取最近任务，再过滤失败项
+    recent = memory_manager.get_recent_tasks(hours=7 * 24, limit=50)
+    failures = [t for t in recent if t.get('outcome') != 'success']
     lessons = []
     
     error_categories = {}
     for task in failures:
-        err = task.get('error_info', '')
+        # get_recent_tasks 返回 input_summary 而非 error_info
+        err = task.get('input_summary', '') + ' ' + task.get('outcome', '')
         # 简单归类
         if '超时' in err or 'timeout' in err.lower():
             cat = '超时'
@@ -119,5 +128,5 @@ def extract_lessons(memory_manager):
 
 def compress_old_memories(memory_manager, days=30):
     """压缩过期记忆"""
-    result = memory_manager.compress_memory(days)
+    result = memory_manager.compress(days_keep=days)
     return result

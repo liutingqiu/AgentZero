@@ -1,24 +1,58 @@
 """零 · 工具注册表
 ==================
 AgentLoop 通过此注册表调用所有工具。
-每个工具是独立函数，签名统一: func(args) -> dict
+所有工具签名: func(args) -> Result
+统一错误协议：utils.result.Result
 
-从 agent-system/agent_core.py 的 TOOL_REGISTRY 重写。
+修复要点：
+  - P1-A2: keyring 惰性获取，支持环境变量回退
+  - P0-A3: shell 工具白名单前缀校验，默认 shell=False
+  - web_fetch 走非贪婪正则，避免 HTML 提取失败
+  - 日志统一到 get_logger
+  - v3: 所有返回值统一为 Result 信封
 """
 
-import os, sys, re, json, shutil, subprocess, urllib.request, fnmatch, threading, concurrent.futures
+import concurrent.futures
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys as _sys
+import urllib.request
+
+from config import get_agnes_key, get_logger
+from utils.result import Result, ErrorCode, ok, err
+
+logger = get_logger('zero.tools')
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# ── 工具注册表 ──
+
+# ── 工具注册表 ─────────────────────────────────────────────────────
 TOOLS = {}
 
+
 def register(name, description=''):
-    """装饰器：注册工具"""
     def decorator(fn):
         TOOLS[name] = {'fn': fn, 'description': description}
         return fn
     return decorator
+
+
+# ── 全局安全策略 ───────────────────────────────────────────────
+_ALLOWED_CMD_PREFIXES = (
+    'git', 'python', 'pip', 'node', 'npm', 'npx',
+    'dir', 'ls', 'cd', 'echo', 'type', 'cat',
+    'pwd', 'where', 'which', 'find', 'tasklist', 'ver',
+    'copy', 'move', 'mkdir', 'rmdir', 'del',
+)
+
+
+# ── 辅助 ───────────────────────────────────────────────────────
+def _resolve_path(args):
+    """从 args 中解析路径（兼容多种 key 名）。"""
+    return args.get('path', '') or args.get('file_path', '') or args.get('file', '')
 
 
 # ═══════════════════════════════════════════
@@ -27,65 +61,81 @@ def register(name, description=''):
 
 @register('read_file', '读取文件内容')
 def tool_read_file(args):
-    path = args.get('path', '') or args.get('file_path', '') or args.get('file', '')
-    if not os.path.exists(path):
-        return {'success': False, 'error': f'文件不存在: {path}'}
+    path = _resolve_path(args)
+    if not path or not os.path.exists(path):
+        return err(ErrorCode.FILE_NOT_FOUND, f'文件不存在: {path}')
     try:
-        max_lines = args.get('lines', 0) or args.get('max_lines', 0)
+        max_lines = int(args.get('lines', 0) or args.get('max_lines', 0))
         with open(path, 'r', encoding='utf-8', errors='ignore') as f:
             if max_lines > 0:
                 lines = [next(f, '') for _ in range(max_lines)]
                 content = ''.join(lines)
             else:
                 content = f.read(10000)
-        return {'success': True, 'output': content, 'size': len(content)}
-    except Exception as e:
-        return {'success': False, 'error': str(e)}
+        return ok({'content': content, 'size': len(content)})
+    except Exception as exc:
+        logger.warning('read_file %s failed: %s', path, exc)
+        return err(ErrorCode.INTERNAL, str(exc))
+
 
 @register('write_file', '写入文件')
 def tool_write_file(args):
-    path, content = args.get('path', ''), args.get('content', '')
-    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as f:
-        f.write(content)
-    return {'success': True, 'output': f'已写入: {path}'}
+    path = args.get('path', '')
+    content = args.get('content', '')
+    try:
+        directory = os.path.dirname(path) or '.'
+        os.makedirs(directory, exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        return ok({'message': f'已写入: {path}'})
+    except OSError as exc:
+        logger.warning('write_file %s failed: %s', path, exc)
+        return err(ErrorCode.INTERNAL, str(exc))
+
 
 @register('edit_file', '替换文件中的文本')
 def tool_edit_file(args):
-    path, search, replace = args.get('path',''), args.get('search',''), args.get('replace','')
+    path = args.get('path', '')
+    search = args.get('search', '')
+    replace = args.get('replace', '')
     if not os.path.exists(path):
-        return {'success': False, 'error': f'文件不存在: {path}'}
-    with open(path, 'r', encoding='utf-8') as f:
-        content = f.read()
-    if search not in content:
-        return {'success': False, 'error': '未找到匹配文本'}
-    if content.count(search) > 1:
-        return {'success': False, 'error': '匹配文本不唯一，请提供更多上下文'}
-    with open(path, 'w', encoding='utf-8') as f:
-        f.write(content.replace(search, replace, 1))
-    return {'success': True, 'output': f'已修改: {path}'}
+        return err(ErrorCode.FILE_NOT_FOUND, f'文件不存在: {path}')
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        if search not in content:
+            return err(ErrorCode.INVALID_INPUT, '未找到匹配文本')
+        if content.count(search) > 1:
+            return err(ErrorCode.INVALID_INPUT, '匹配文本不唯一，请提供更多上下文')
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(content.replace(search, replace, 1))
+        return ok({'message': f'已修改: {path}'})
+    except OSError as exc:
+        logger.warning('edit_file %s failed: %s', path, exc)
+        return err(ErrorCode.INTERNAL, str(exc))
+
 
 @register('list_directory', '列出目录内容')
 def tool_list_dir(args):
     path = args.get('path', '.')
     if not os.path.isdir(path):
-        return {'success': False, 'error': f'不是目录: {path}'}
+        return err(ErrorCode.FILE_NOT_FOUND, f'不是目录: {path}')
     entries = os.listdir(path)
     dirs = [f'📁 {e}/' for e in entries if os.path.isdir(os.path.join(path, e))]
     files = [f'📄 {e}' for e in entries if not os.path.isdir(os.path.join(path, e))]
-    return {'success': True, 'output': dirs + files}
+    return ok(dirs + files)
+
 
 @register('search_files', '搜索文件名（子串匹配）')
 def tool_search_files(args):
     pattern = args.get('pattern', '')
     directory = args.get('path', '.')
     results = []
-    skip = {'.git','node_modules','__pycache__','.venv','dist','build','.reasonix'}
+    skip = {'.git', 'node_modules', '__pycache__', '.venv', 'dist', 'build', '.reasonix'}
     try:
         for root, dirs, files in os.walk(directory):
             dirs[:] = [d for d in dirs if d not in skip]
             for f in files:
-                # v2: 子串匹配替代 fnmatch（GPT-4o: fnmatch 不支持 '环的小说'→'环_全本.md'）
                 if pattern.lower() in f.lower():
                     results.append(os.path.join(root, f))
                 if len(results) >= 50:
@@ -94,15 +144,18 @@ def tool_search_files(args):
                 break
     except PermissionError:
         pass
-    return {'success': True, 'output': results[:30], 'count': len(results)}
+    return ok({'files': results[:30], 'count': len(results)})
+
 
 @register('search_content', '搜索文件内容')
 def tool_search_content(args):
     pattern = args.get('pattern', '')
     directory = args.get('path', '.')
     results = []
-    skip = {'.git','node_modules','__pycache__','.venv','dist','build','.reasonix'}
-    text_exts = {'.py','.js','.ts','.html','.css','.md','.txt','.json','.yml','.yaml','.sh','.bat'}
+    skip = {'.git', 'node_modules', '__pycache__', '.venv',
+            'dist', 'build', '.reasonix'}
+    text_exts = {'.py', '.js', '.ts', '.html', '.css', '.md',
+                 '.txt', '.json', '.yml', '.yaml', '.sh', '.bat'}
     try:
         for root, dirs, files in os.walk(directory):
             dirs[:] = [d for d in dirs if d not in skip]
@@ -110,67 +163,112 @@ def tool_search_content(args):
                 if os.path.splitext(f)[1].lower() not in text_exts:
                     continue
                 try:
-                    with open(os.path.join(root, f), 'r', encoding='utf-8', errors='ignore') as fh:
+                    with open(os.path.join(root, f), 'r',
+                              encoding='utf-8', errors='ignore') as fh:
                         for i, line in enumerate(fh, 1):
                             if pattern.lower() in line.lower():
-                                results.append(f'{os.path.join(root,f)}:{i}: {line.strip()[:120]}')
-                                if len(results) >= 20: break
-                except: pass
-                if len(results) >= 20: break
-            if len(results) >= 20: break
+                                results.append(
+                                    f'{os.path.join(root, f)}:{i}: {line.strip()[:120]}'
+                                )
+                                if len(results) >= 20:
+                                    break
+                except Exception:
+                    pass
+                if len(results) >= 20:
+                    break
+            if len(results) >= 20:
+                break
     except PermissionError:
         pass
-    return {'success': True, 'output': results[:20] if results else f'未找到: {pattern}'}
+    return ok(results[:20] if results else f'未找到: {pattern}')
+
 
 @register('create_directory', '创建目录')
 def tool_create_dir(args):
     path = args.get('path', '')
-    os.makedirs(path, exist_ok=True)
-    return {'success': True, 'output': f'已创建: {path}'}
+    try:
+        os.makedirs(path, exist_ok=True)
+        return ok({'message': f'已创建: {path}'})
+    except OSError as exc:
+        logger.warning('create_directory %s failed: %s', path, exc)
+        return err(ErrorCode.INTERNAL, str(exc))
+
 
 @register('delete_file', '删除文件')
 def tool_delete_file(args):
     path = args.get('path', '')
     if os.path.isfile(path):
         os.remove(path)
-        return {'success': True, 'output': f'已删除: {path}'}
-    return {'success': False, 'error': f'文件不存在: {path}'}
+        return ok({'message': f'已删除: {path}'})
+    return err(ErrorCode.FILE_NOT_FOUND, f'文件不存在: {path}')
+
 
 @register('move_file', '移动文件')
 def tool_move_file(args):
     src = args.get('source', args.get('src', ''))
     dst = args.get('dest', args.get('dst', ''))
     if not os.path.exists(src):
-        return {'success': False, 'error': f'源文件不存在: {src}'}
-    os.makedirs(os.path.dirname(dst) or '.', exist_ok=True)
-    shutil.move(src, dst)
-    return {'success': True, 'output': f'{src} → {dst}'}
+        return err(ErrorCode.FILE_NOT_FOUND, f'源文件不存在: {src}')
+    try:
+        os.makedirs(os.path.dirname(dst) or '.', exist_ok=True)
+        shutil.move(src, dst)
+        return ok({'message': f'{src} → {dst}'})
+    except OSError as exc:
+        return err(ErrorCode.INTERNAL, str(exc))
+
 
 @register('copy_file', '复制文件')
 def tool_copy_file(args):
     src = args.get('source', args.get('src', ''))
     dst = args.get('dest', args.get('dst', ''))
     if not os.path.exists(src):
-        return {'success': False, 'error': f'源文件不存在: {src}'}
-    os.makedirs(os.path.dirname(dst) or '.', exist_ok=True)
-    shutil.copy2(src, dst)
-    return {'success': True, 'output': f'{src} → {dst}'}
+        return err(ErrorCode.FILE_NOT_FOUND, f'源文件不存在: {src}')
+    try:
+        os.makedirs(os.path.dirname(dst) or '.', exist_ok=True)
+        shutil.copy2(src, dst)
+        return ok({'message': f'{src} → {dst}'})
+    except OSError as exc:
+        return err(ErrorCode.INTERNAL, str(exc))
 
-@register('shell', '执行系统命令')
+
+# ── shell 工具（安全加固版） ───────────────────────────────────
+@register('shell', '执行系统命令（仅限白名单）')
 def tool_shell(args):
     cmd = args.get('command', '')
+    if not cmd:
+        return err(ErrorCode.INVALID_INPUT, '缺少 command')
+
+    stripped = cmd.lstrip().lower()
+    first_token = stripped.split()[0] if stripped.split() else ''
+    clean_token = first_token.strip('"\'')
+
+    if not any(clean_token.startswith(p) for p in _ALLOWED_CMD_PREFIXES):
+        logger.warning('shell rejected (not in whitelist): %s', cmd[:80])
+        return err(
+            ErrorCode.SHELL_REJECTED,
+            f'命令不在白名单: {clean_token}。白名单: {", ".join(_ALLOWED_CMD_PREFIXES)}',
+        )
+
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, 
-                          timeout=60, cwd=BASE)
-        return {
-            'success': r.returncode == 0,
-            'output': r.stdout or r.stderr,
-            'exit_code': r.returncode
-        }
+        import shlex
+        argv = shlex.split(cmd, posix=False) if not isinstance(cmd, list) else cmd
+        result = subprocess.run(
+            argv, shell=False, capture_output=True, text=True,
+            timeout=60, cwd=BASE,
+            encoding='utf-8', errors='replace',
+        )
+        return ok({
+            'stdout': (result.stdout or result.stderr)[:3000],
+            'exit_code': result.returncode,
+            'success': result.returncode == 0,
+        })
     except subprocess.TimeoutExpired:
-        return {'success': False, 'error': '命令超时(60s)'}
-    except Exception as e:
-        return {'success': False, 'error': str(e)}
+        return err(ErrorCode.TIMEOUT, '命令超时(60s)')
+    except FileNotFoundError as exc:
+        return err(ErrorCode.INTERNAL, f'未找到命令: {exc}')
+    except Exception as exc:
+        logger.warning('shell failed: %s', exc)
+        return err(ErrorCode.INTERNAL, str(exc))
 
 
 # ═══════════════════════════════════════════
@@ -181,35 +279,45 @@ def tool_shell(args):
 def tool_web_search(args):
     query = args.get('query', '')
     if not query:
-        return {'success': False, 'error': '缺少 query'}
-    # DuckDuckGo Lite（快速超时，不通则走 fallback）
+        return err(ErrorCode.INVALID_INPUT, '缺少 query')
     try:
         import urllib.parse
         url = f'https://lite.duckduckgo.com/lite/?q={urllib.parse.quote(query)}'
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8', errors='ignore')
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            html = resp.read().decode('utf-8', errors='ignore')
         results = []
-        for m in re.finditer(r'<a[^>]*rel="nofollow"[^>]*href="([^"]*)"[^>]*>([^<]*)</a>', html):
+        for m in re.finditer(
+            r'<a[^>]*rel="nofollow"[^>]*href="([^"]*)"[^>]*>([^<]*)</a>',
+            html,
+        ):
             results.append({'title': m.group(2).strip(), 'url': m.group(1)})
         if results:
-            return {'success': True, 'output': results[:10]}
-    except:
+            return ok(results[:10])
+    except Exception:
         pass
-    return {'success': False, 'error': '搜索不可用（DDG 被墙，请用 GPT-4o 搜索）'}
+    return err(ErrorCode.NETWORK, '搜索不可用（DDG 被墙，请用 GPT-4o 搜索）')
+
 
 @register('web_fetch', '抓取网页内容')
 def tool_web_fetch(args):
     url = args.get('url', '')
+    if not url:
+        return err(ErrorCode.INVALID_INPUT, '缺少 url')
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        html = urllib.request.urlopen(req, timeout=15).read().decode('utf-8', errors='ignore')
-        html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL|re.IGNORECASE)
-        html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL|re.IGNORECASE)
-        text = re.sub(r'<[^>]*>', ' ', html)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            html = resp.read().decode('utf-8', errors='ignore')
+        html = re.sub(r'<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>',
+                      ' ', html, flags=re.IGNORECASE)
+        html = re.sub(r'<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>',
+                      ' ', html, flags=re.IGNORECASE)
+        text = re.sub(r'<[^>]{0,200}>', ' ', html)
         text = re.sub(r'\s+', ' ', text).strip()
-        return {'success': True, 'output': text[:5000]}
-    except Exception as e:
-        return {'success': False, 'error': f'抓取失败: {e}'}
+        return ok(text[:5000])
+    except Exception as exc:
+        logger.warning('web_fetch %s failed: %s', url[:80], exc)
+        return err(ErrorCode.NETWORK, f'抓取失败: {exc}')
 
 
 # ═══════════════════════════════════════════
@@ -218,134 +326,180 @@ def tool_web_fetch(args):
 
 @register('sysmon', 'KnowledgeSys 状态检查')
 def tool_sysmon(args):
-    """运行 bridge/sysmon.py 获取爬虫状态"""
-    import subprocess
     sysmon_path = os.path.join(BASE, '..', 'agent-system', 'bridge', 'sysmon.py')
     if not os.path.exists(sysmon_path):
-        return {'success': False, 'error': 'sysmon.py 不存在（KnowledgeSys 未安装）'}
-    env = os.environ.copy()
-    env['PYTHONIOENCODING'] = 'utf-8'
-    r = subprocess.run([sys.executable, sysmon_path, '--report'],
-                      capture_output=True, timeout=15, cwd=BASE, env=env)
-    out = r.stdout.decode('utf-8', errors='replace') if r.stdout else ''
-    return {'success': True, 'output': out[:3000]}
+        return err(ErrorCode.TOOL_FAILED, 'sysmon.py 不存在（KnowledgeSys 未安装）')
+    try:
+        env = os.environ.copy()
+        env['PYTHONIOENCODING'] = 'utf-8'
+        result = subprocess.run(
+            [_sys.executable, sysmon_path, '--report'],
+            capture_output=True, text=True, timeout=15, cwd=BASE,
+            encoding='utf-8', errors='replace', env=env,
+        )
+        return ok((result.stdout or '')[:3000])
+    except Exception as exc:
+        return err(ErrorCode.TOOL_FAILED, f'sysmon 调用失败: {exc}')
+
 
 @register('agent_status', 'Agent 在线状态')
 def tool_agent_status(args):
-    """返回 Agent 注册表状态"""
-    return {
-        'success': True,
-        'output': {
-            'deepseek': '✅ 在线 (API)',
-            'gpt4o': '✅ 在线 (API)',
-            'zero_server': '✅ 运行中',
-        }
-    }
+    return ok({
+        'deepseek': '✅ 在线 (API)',
+        'gpt4o': '✅ 在线 (API)',
+        'zero_server': '✅ 运行中',
+    })
 
 
 # ═══════════════════════════════════════════
-# Scrapling 爬虫工具（62K星，自适应网站改版）
+# Scrapling 爬虫工具
 # ═══════════════════════════════════════════
 
 @register('scrapling_fetch', 'Scrapling 抓取网页（自适应反爬）')
 def tool_scrapling_fetch(args):
     url = args.get('url', '')
     if not url:
-        return {'success': False, 'error': '缺少 url'}
+        return err(ErrorCode.INVALID_INPUT, '缺少 url')
     try:
         from scrapling.fetchers import Fetcher
         page = Fetcher.get(url, timeout=15)
-        # 提取所有文本
         text = page.css('body::text').get() or ''
-        # 提取标题
-        title = page.css_first('title::text')
-        title_text = title or ''
-        return {
-            'success': True,
-            'output': text[:5000],
-            'title': title_text,
-            'url': url
-        }
-    except Exception as e:
-        return {'success': False, 'error': f'Scrapling 抓取失败: {e}'}
+        title_el = page.css_first('title::text')
+        return ok({
+            'content': text[:5000],
+            'title': title_el or '',
+            'url': url,
+        })
+    except Exception as exc:
+        logger.warning('scrapling_fetch %s failed: %s', url[:80], exc)
+        return err(ErrorCode.NETWORK, f'Scrapling 抓取失败: {exc}')
 
-@register('scrapling_stealth', 'Scrapling 隐身模式（过Cloudflare）')
+
+@register('scrapling_stealth', 'Scrapling 隐身模式（过 Cloudflare）')
 def tool_scrapling_stealth(args):
     url = args.get('url', '')
     if not url:
-        return {'success': False, 'error': '缺少 url'}
+        return err(ErrorCode.INVALID_INPUT, '缺少 url')
     try:
         from scrapling.fetchers import StealthyFetcher
         page = StealthyFetcher.fetch(url, headless=True)
         text = page.css('body::text').get() or ''
-        return {'success': True, 'output': text[:5000], 'url': url}
-    except Exception as e:
-        return {'success': False, 'error': f'隐身抓取失败: {e}'}
+        return ok({'content': text[:5000], 'url': url})
+    except Exception as exc:
+        return err(ErrorCode.NETWORK, f'隐身抓取失败: {exc}')
 
 
 # ═══════════════════════════════════════════
-# Agnes AI 工具（全球第9 AI Lab，免费API）
+# Agnes AI 工具（惰性获取 key）
 # ═══════════════════════════════════════════
 
-AGNES_API = 'https://apihub.agnes-ai.com/v1/chat/completions'
-AGNES_KEY = __import__('keyring').get_password('AGNES', 'KEY') or ''
+_AGNES_API = 'https://apihub.agnes-ai.com/v1/chat/completions'
+
 
 @register('agnes_chat', 'Agnes 2.0 Flash 文本生成（免费）')
 def tool_agnes_chat(args):
     prompt = args.get('prompt', '')
     if not prompt:
-        return {'success': False, 'error': '缺少 prompt'}
-    if not AGNES_KEY:
-        return {'success': False, 'error': 'Agnes API Key 未配置（在 agnes-ai.com 免费获取）'}
+        return err(ErrorCode.INVALID_INPUT, '缺少 prompt')
+    key = get_agnes_key()
+    if not key:
+        return err(
+            ErrorCode.AUTH,
+            'Agnes API Key 未配置（设环境变量 AGNES_API_KEY 或 keyring）',
+        )
     try:
         payload = json.dumps({
             'model': 'agnes-2.0-flash',
             'messages': [
                 {'role': 'system', 'content': '你是零的免费AI引擎。简洁回复。'},
-                {'role': 'user', 'content': prompt}
+                {'role': 'user', 'content': prompt},
             ],
-            'max_tokens': 1000
-        }).encode()
-        req = urllib.request.Request(AGNES_API, data=payload,
-            headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {AGNES_KEY}'})
-        r = json.loads(urllib.request.urlopen(req, timeout=120).read())
-        reply = r['choices'][0]['message']['content']
-        usage = r.get('usage', {})
-        return {
-            'success': True,
-            'output': reply,
+            'max_tokens': 1000,
+        }).encode('utf-8')
+        req = urllib.request.Request(
+            _AGNES_API, data=payload, headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {key}',
+            })
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        reply = data['choices'][0]['message']['content']
+        usage = data.get('usage', {})
+        return ok({
+            'reply': reply,
             'tokens': usage.get('total_tokens', 0),
-            'model': 'agnes-2.0-flash (免费)'
-        }
-    except Exception as e:
-        return {'success': False, 'error': f'Agnes 调用失败: {e}'}
+            'model': 'agnes-2.0-flash (免费)',
+        })
+    except Exception as exc:
+        logger.warning('agnes_chat failed: %s', exc)
+        return err(ErrorCode.MODEL_UNAVAILABLE, f'Agnes 调用失败: {exc}')
+
+
+# ═══════════════════════════════════════════
+# 生图工具（Agnes Image API）
+# ═══════════════════════════════════════════
+
+_AGNES_IMAGE_URL = 'https://apihub.agnes-ai.com/v1/images/generations'
+
+
+@register('image_generate', '生成图片（调用 Agnes Image API）')
+def tool_image_generate(args):
+    """生图工具。Agent 自主决定何时调用。"""
+    prompt = args.get('prompt', '')
+    if not prompt:
+        return err(ErrorCode.INVALID_INPUT, '缺少 prompt（描述要生成的图片）')
+    key = get_agnes_key()
+    if not key:
+        return err(ErrorCode.AUTH,
+                   'Agnes API Key 未配置，无法生图',
+                   fallback='请主人配置 AGNES_API_KEY')
+    try:
+        payload = json.dumps({
+            'model': 'agnes-image-2.1-flash',
+            'prompt': prompt,
+            'n': args.get('n', 1),
+            'size': args.get('size', '1024x1024'),
+        }).encode('utf-8')
+        req = urllib.request.Request(
+            _AGNES_IMAGE_URL, data=payload,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {key}',
+            })
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        img_url = data['data'][0].get('url', '')
+        if img_url:
+            return ok({'url': img_url, 'prompt': prompt})
+        return err(ErrorCode.MODEL_EMPTY_RESPONSE, '生图成功但未返回 URL')
+    except Exception as exc:
+        logger.warning('image_generate failed: %s', exc)
+        return err(ErrorCode.MODEL_UNAVAILABLE, f'生图失败: {exc}')
 
 
 # ═══════════════════════════════════════════
 # 工具执行入口
 # ═══════════════════════════════════════════
 
-def execute(tool_name, args, timeout=30):
-    """执行一个工具，返回 {success, output/error}
-    
-    v2: 加超时保护（GPT-4o: 工具可能卡死）
-    """
+def execute(tool_name, args, timeout=30) -> Result:
+    """执行一个工具，返回统一的 Result 信封。"""
     tool = TOOLS.get(tool_name)
     if not tool:
-        return {'success': False, 'error': f'未知工具: {tool_name}'}
+        return err(ErrorCode.TOOL_NOT_FOUND, f'未知工具: {tool_name}')
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(tool['fn'], args)
             return future.result(timeout=timeout)
     except concurrent.futures.TimeoutError:
-        return {'success': False, 'error': f'工具 {tool_name} 超时({timeout}s)'}
-    except Exception as e:
-        return {'success': False, 'error': str(e)}
+        return err(ErrorCode.TOOL_TIMEOUT, f'工具 {tool_name} 超时({timeout}s)')
+    except Exception as exc:
+        logger.warning('tool %s failed: %s', tool_name, exc)
+        return err(ErrorCode.TOOL_FAILED, str(exc))
+
 
 def list_tools():
-    """返回所有工具名和描述"""
     return {name: info['description'] for name, info in TOOLS.items()}
 
+
 def get_tool_names():
-    """返回工具名列表（供 LLM prompt 用）"""
     return list(TOOLS.keys())

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hello World</title>
+    <!-- 简单的内联样式，让页面更清爽好看 -->
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(145deg, #f5f7fa 0%, #c3cfe2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Segoe UI', Roboto, system-ui, -apple-system, sans-serif;
+            padding: 20px;
+        }
+
+        .hello-card {
+            background: rgba(255, 255, 255, 0.75);
+            backdrop-filter: blur(4px);
+            border-radius: 48px;
+            box-shadow: 0 25px 40px -12px rgba(0, 0, 0, 0.25), 
+                        0 8px 16px -8px rgba(0, 0, 0, 0.1);
+            padding: 48px 64px;
+            text-align: center;
+            transition: all 0.2s ease;
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            max-width: 600px;
+            width: 100%;
+        }
+
+        .hello-card:hover {
+            transform: translateY(-4px) scale(1.01);
+            box-shadow: 0 32px 48px -16px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            font-size: 5rem;
+            font-weight: 700;
+            color: #1e2b3c;
+            letter-spacing: 2px;
+            text-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+            margin-bottom: 16px;
+            word-break: break-word;
+        }
+
+        .greeting-sub {
+            font-size: 1.4rem;
+            color: #2c3e50;
+            opacity: 0.8;
+            font-weight: 400;
+            border-top: 2px solid rgba(44, 62, 80, 0.15);
+            padding-top: 18px;
+            margin-top: 8px;
+            letter-spacing: 1px;
+        }
+
+        .greeting-sub span {
+            background: #2c3e50;
+            color: #f0f4fa;
+            padding: 4px 16px;
+            border-radius: 40px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            display: inline-block;
+        }
+
+        @media (max-width: 480px) {
+            .hello-card {
+                padding: 32px 24px;
+                border-radius: 32px;
+            }
+            h1 {
+                font-size: 3.4rem;
+            }
+            .greeting-sub {
+                font-size: 1.1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="hello-card">
+        <!-- 经典问候：Hello World -->
+        <h1>Hello World</h1>
+        <!-- 装饰性副文本，简洁且友好 -->
+        <div class="greeting-sub">
+            <span>🌍 你好，世界</span>
+        </div>
+        <!-- 隐藏的小彩蛋（仅查看源码可见）: 来自 Reasonix 的问候 -->
+        <!-- ⭐ 简单，但经典永不过时 ⭐ -->
+    </div>
+</body>
+</html>
