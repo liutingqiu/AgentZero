@@ -1,10 +1,25 @@
 # ⚡ 零 (Zero) — AI OS Kernel
 
-> 一句话落地：输入任务，AI 团队自动协作完成。
+> ⚠️ **原型阶段，非正式产品。** 仅供学习和演示。
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Docker](https://img.shields.io/badge/Docker-ready-blue)](https://hub.docker.com)
+[![Status](https://img.shields.io/badge/Status-Prototype-orange)]()
+
+---
+
+**一句话落地**：输入任务，AI 团队自动协作完成。
+
+---
+
+## ⚠️ 故障排查
+
+看到 `[所有模型不可用，请稍后重试]`？
+
+1. 确认 API Key 已配置：`cp .env.example .env` 并填入真实 Key
+2. 确认网络能访问 API 地址（Agnes: apihub.agnes-ai.com / DeepSeek: api.deepseek.com）
+3. 免费 API (Agnes) 有时不稳定，换 DeepSeek 试试
+4. 如果都没配，系统会直接返回这个提示——这是正常的
 
 ---
 
