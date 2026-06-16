@@ -80,7 +80,7 @@ zero/
 ## 凭据位置
 - Windows Credential Manager (keyring)
 - AGNES/KEY, AIHUBMIX/KEY, SEARCH_API/TAVILY_KEY
-- GitHub Token: ***REDACTED***
+- GitHub Token: ⚠️ 已撤销，请用新 Token
 
 ## 当前运行
 - 零 v4: http://127.0.0.1:5052 (Agnes优先→DeepSeek兜底)
