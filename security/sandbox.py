@@ -3,11 +3,15 @@
 隔离目录 + 路径白名单 + 网络隔离 + 资源限制
 
 从 agent-system/sandbox_evolve.py 重写，精简为核心 Sandbox 类。
+
+P2: 实现 SandboxInterface 抽象接口，支持多平台。
 """
 
 import os, sys, shutil, subprocess, json, ctypes, atexit
 from ctypes import wintypes
 from datetime import datetime
+
+from infrastructure.sandbox.interface import SandboxInterface
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SANDBOX_DIR = os.path.join(BASE, 'data', 'sandbox')
@@ -45,9 +49,9 @@ JOB_OBJECT_LIMIT_JOB_TIME = 0x0004
 JobObjectExtendedLimitInformation = 9
 
 
-class Sandbox:
-    """隔离执行环境。
-    
+class Sandbox(SandboxInterface):
+    """隔离执行环境（Windows Job Object）。
+
     安全机制:
       - 路径白名单: 只允许访问沙箱目录
       - 网络隔离: 防火墙阻断出站
@@ -95,6 +99,14 @@ class Sandbox:
         line = f'[{ts}] [{level}] {msg}'
         self.logs.append(line)
     
+    def is_active(self) -> bool:
+        """检查沙箱是否激活。"""
+        return self._job_handle is not None
+
+    def enforce_path(self, path: str) -> bool:
+        """公开路径检查接口（SandboxInterface）。"""
+        return self._enforce_path(path)
+
     def _enforce_path(self, path):
         """路径安全检查——防符号链接绕过。
 
