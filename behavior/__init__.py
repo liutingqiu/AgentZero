@@ -16,7 +16,7 @@ from behavior.calibration import (
     ControlMemory, ControlRecord, calibrated_strength,
     record_outcome, record_feedback, get_control_memory,
 )
-from behavior.evaluate import (
+from behavior_canon import (
     synthetic_evaluate, auto_ground, _llm_evaluate,
 )
 from behavior.grounding import (

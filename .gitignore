@@ -1,23 +1,57 @@
-# 零 项目源码
-# 排除测试、日志、缓存、数据文件
+# 零 · 项目 .gitignore
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+
+# 数据文件（运行时生成）
 data/
+!data/zero_config.json
+!data/.gitkeep
+
+# 数据库
 *.db
 *.sqlite
 *.sqlite3
-tests/
+
+# 日志
 *.log
-*.json
 gpt_logs/
 agent_logs/
 reports/
+
+# 安全 & 个人配置
+.env
+.env.local
+personal_config.json
+personal/
+session_state.json
+behavior_fingerprint.json
+*.bak
+
+# 沙箱 / 缓存
 sandbox/
 .cache/
 .reasonix/
+
+# 临时文件
 *.tmp
-*.bak
-session_state.json
-behavior_fingerprint.json
-.env
+
+# Docker
 docker-compose.override.yml
+
+# IDE
+.vscode/
+.idea/
+
+# Windows 保留名（误创建）
+nul
+
+# BitFun（自动管理，不上传）
+.bitfun/
+
+# 测试（保留源码，排除缓存）
+tests/**/__pycache__/
+tests/**/*.pyc
+.pytest_cache/

@@ -14,6 +14,8 @@
 
 import json, os, sys, urllib.request, subprocess, re, fnmatch
 
+_OWNER = os.environ.get('OWNER_NAME', 'User')
+
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(BASE, '..', 'agent-system'))
 sys.path.insert(0, BASE)
@@ -21,11 +23,7 @@ sys.path.insert(0, BASE)
 from action.tools import execute, TOOLS as ZERO_TOOLS
 
 # ── GPT-4o API ──
-try:
-    from secure_config import get_api_url, get_api_key  # noqa: WPS433
-except ImportError:
-    # secure_config 不存在时回退到 config 的环境变量/keyring
-    from config import get_api_url, get_api_key  # noqa: WPS440
+from config import get_api_url, get_api_key
 API_URL = get_api_url()
 API_KEY = get_api_key()
 
@@ -44,13 +42,14 @@ SYSTEM_PROMPT = f"""你是 GPT-4o，零的创意总监。你有以下工具可�
 - 每次只调用一个工具
 - 获取工具结果后，判断是否需要更多操作还是可以结束
 - 用中文回复
-- 你只为柳橙（主人）服务"""
+- 你只为{_OWNER}（主人）服务"""
 
 
 def call_gpt4o(messages):
     """调用 GPT-4o，返回回复文本"""
+    from config import MODEL_NAMES
     payload = json.dumps({
-        'model': 'gpt-4o',
+        'model': MODEL_NAMES['gpt4o'],
         'messages': messages
     }).encode()
     req = urllib.request.Request(API_URL, data=payload,

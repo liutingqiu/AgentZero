@@ -13,16 +13,18 @@ import logging
 
 from aiohttp import web
 
+import threading as _threading
 from config import (
-    HTTP_HOST, HTTP_PORT, ZERO_ROOT,
+    HTTP_HOST, HTTP_PORT, ZERO_ROOT, OWNER_NAME, DATA_DIR,
     get_agnes_key, get_api_key, get_api_url, get_logger,
 )
 from interface.webapp import WEBAPP_HTML
 from app.services.llm import (
     call_llm, handle_message, tokens, session, wm,
-    bus, tsm, registry, reviewer, orch,
+    bus, tsm, registry, reviewer,
 )
 from cognition import memory_manager
+from cognition.token_tracker import tracker as token_tracker
 
 logger = get_logger('zero.api')
 os.chdir(ZERO_ROOT)
@@ -74,7 +76,8 @@ class SettingsHandler(web.View):
         }
         return web.json_response({
             'agents': agent_status, 'memory': mem_status, 'apis': api_info,
-            'session_unlocked': session.is_unlocked(), 'watch_root': 'E:\\project',
+            'session_unlocked': session.is_unlocked(), 'watch_root': '.',
+            'owner': OWNER_NAME,
         }, headers=_cors_headers())
 
 
@@ -105,6 +108,24 @@ class KanbanHandler(web.View):
             }, headers=_cors_headers())
         except Exception as exc:
             return web.json_response({'error': str(exc)}, status=500, headers=_cors_headers())
+
+
+@routes.view('/api/tokens')
+class TokenStatsHandler(web.View):
+    """Token 消耗统计。"""
+    async def get(self):
+        if not _authed(self.request):
+            return web.json_response({'error': '需要认证'}, status=401, headers=_cors_headers())
+        return web.json_response(token_tracker.session_stats(), headers=_cors_headers())
+
+
+@routes.view('/api/tokens/recent')
+class TokenRecentHandler(web.View):
+    """最近 Token 调用记录。"""
+    async def get(self):
+        if not _authed(self.request):
+            return web.json_response({'error': '需要认证'}, status=401, headers=_cors_headers())
+        return web.json_response(token_tracker.recent_calls(30), headers=_cors_headers())
 
 
 @routes.view('/api/notifications')
@@ -176,6 +197,11 @@ class ChatStreamHandler(web.View):
 
 @routes.view('/api/collab/stream')
 class CollabStreamHandler(web.View):
+    """SSE 流式协作端点——由 GoalOrchestrator 接管。
+    
+    保留 SSE 协议格式以兼容前端 `sendCollab()` 的接口，
+    内部实现切换到统一的 GoalOrchestrator。
+    """
     async def get(self):
         if not _authed(self.request):
             return web.Response(status=401, content_type='text/event-stream',
@@ -200,91 +226,40 @@ class CollabStreamHandler(web.View):
             except (ConnectionResetError, BrokenPipeError):
                 pass
 
-        from app.services.async_llm import async_call_llm as _acall
-
         try:
-            from multi_agent import PlannerV5, BlackboardV5, ExecutorV5, CriticV5, SynthesizerV5
-            from behavior_canon import synthetic_evaluate
+            from action.goal_orchestrator import GoalOrchestrator
+            orch = GoalOrchestrator(llm_caller=call_llm)
+            
+            await _send('status', '目标编排器已启动')
+            await _send('step', {'role': 'planner', 'status': 'running',
+                                 'action': '正在分析任务...'})
 
-            # 使用异步 LLM
-            async def _fast_call(**kw):
-                return await _acall(messages=kw.get('messages'), prefer_free=False, timeout=60)
-
-            await _send('status', '启动协作引擎')
-            await _send('step', {'role': 'planner', 'status': 'running', 'action': '正在分析任务...'})
-
-            try:
-                planner = PlannerV5(lambda **kw: call_llm(**kw))  # 同步包装
-                bb = BlackboardV5(message)
-                proposed = planner.propose(bb)
-                step_ids = bb.create_steps(proposed)
-                await _send('step', {'role': 'planner', 'status': 'done',
-                                     'action': f'拆解为 {len(step_ids)} 个步骤',
-                                     'detail': str(proposed)[:500]})
-            except Exception as exc:
-                await _send('step', {'role': 'planner', 'status': 'failed',
-                                     'action': f'规划失败: {exc}'})
-                await _send('done', {'status': 'failed', 'answer': f'规划失败: {exc}'})
-                return resp
-
-            executor = ExecutorV5(lambda **kw: call_llm(**kw))
-            critic = CriticV5(lambda **kw: call_llm(**kw))
-            completed = 0
-
-            for sid in step_ids:
-                step = bb.get_step(sid)
-                if not step:
-                    continue
-                info = {'id': sid, 'action': step['action'], 'criteria': step['criteria']}
-                await _send('step', {'id': sid, 'role': 'executor', 'status': 'running',
-                                     'action': step['action'][:120]})
-
-                for attempt in range(3):
-                    try:
-                        bb.start_step(sid, 'executor')
-                        output = executor.execute(info, bb)
-                        rule_s, _ = synthetic_evaluate(output, 'code')
-                        critique = critic.review(output, info)
-                        bb.submit_critique(sid, critique, 'critic')
-
-                        if critique.get('passed', True):
-                            bb.complete_step(sid, output, 'executor')
-                            completed += 1
-                            await _send('step', {
-                                'id': sid, 'role': 'executor', 'status': 'done',
-                                'action': step['action'][:120], 'output': output[:800],
-                                'critique': {'score': critique.get('score'), 'passed': True},
-                            })
-                            break
-                        elif attempt < 2:
-                            issues = critique.get('issues', [])
-                            suggestions = critique.get('suggestions', [])
-                            info['action'] = f'{info["action"]}\n[修正] {"; ".join(issues)}'
-                            await _send('step', {
-                                'id': sid, 'role': 'critic', 'status': 'running',
-                                'action': f'发现问题: {"; ".join(issues[:2])}',
-                                'detail': f'建议: {"; ".join(suggestions[:2])}',
-                            })
-                        else:
-                            bb.fail_step(sid, 'executor', '审查未通过')
-                            await _send('step', {'id': sid, 'role': 'executor',
-                                                  'status': 'failed',
-                                                  'action': step['action'][:120]})
-                    except Exception as exc:
-                        await _send('step', {'id': sid, 'role': 'executor',
-                                              'status': 'failed',
-                                              'action': str(exc)[:120]})
-                        break
-
-            await _send('step', {'role': 'synthesizer', 'status': 'running',
-                                 'action': '正在整合结果...'})
-            synthesizer = SynthesizerV5(lambda **kw: call_llm(**kw))
-            answer = synthesizer.synthesize(bb)
+            result = orch.run(message, wm=wm)
+            
+            steps = result.get('steps', [])
+            for s in steps:
+                step_id = f'step_{s.get("step", 0)}'
+                action = s.get('action', '')[:120]
+                status = s.get('status', 'done')
+                output = s.get('output', '')[:800]
+                score = s.get('score', 0)
+                
+                await _send('step', {
+                    'id': step_id,
+                    'role': 'executor',
+                    'status': status,
+                    'action': action,
+                    'output': output,
+                    'critique': {'score': score, 'passed': s.get('passed', False)},
+                })
+            
             await _send('step', {'role': 'synthesizer', 'status': 'done',
                                  'action': '结果整合完成'})
             await _send('done', {
-                'status': 'done' if completed == len(step_ids) else 'partial',
-                'answer': answer, 'completed': completed, 'total': len(step_ids),
+                'status': result.get('status', 'done'),
+                'answer': result.get('answer', ''),
+                'completed': result['stats']['completed'],
+                'total': result['stats']['total'],
             })
         except Exception as exc:
             logger.warning('SSE collab failed: %s', exc)
@@ -379,37 +354,28 @@ class CollabHandler(web.View):
         if not message:
             return web.json_response({'error': '缺少 message'}, status=400, headers=_cors_headers())
         try:
-            from multi_agent import collaborate_v8
-            tool_exec = None
-            try:
-                from action.tools import execute as _texec
-                tool_exec = lambda out, _e=_texec: _e('shell', {'command': f'python -c "{out[:200]}"'}).ok
-            except Exception:
-                pass
-            result = collaborate_v8(message, call_llm, tool_exec)
-            bb = result.get('blackboard')
+            from action.goal_orchestrator import GoalOrchestrator
+            orch = GoalOrchestrator(llm_caller=call_llm)
+            result = orch.run(message, wm=wm)
+            steps = result.get('steps', [])
             steps_detail = []
-            if bb:
-                for sid in bb._step_order:
-                    s = bb._steps.get(sid, {})
-                    versions = s.get('versions', [])
-                    steps_detail.append({
-                        'id': sid, 'action': s.get('action', '')[:120],
-                        'status': s.get('status', 'pending'),
-                        'output': versions[-1]['output'][:500] if versions else '',
-                        'version_count': len(versions),
-                        'critiques': [c.get('data', {}).get('passed', True)
-                                      for c in s.get('critiques', [])]
-                        if isinstance(s.get('critiques'), list) else [],
-                    })
+            for s in steps:
+                steps_detail.append({
+                    'id': f'step_{s.get("step", 0)}',
+                    'action': s.get('action', '')[:120],
+                    'status': s.get('status', 'pending'),
+                    'output': s.get('output', '')[:500],
+                    'version_count': 1,
+                    'critiques': [s.get('passed', False)],
+                })
             return web.json_response({
                 'status': result.get('status', 'error'),
                 'answer': result.get('answer', ''),
                 'steps': steps_detail,
-                'completed': result.get('completed', 0),
-                'failed': result.get('failed', 0),
-                'grounded': result.get('grounded', 0),
-                'events': bb.events.stats() if bb else {'total': 0},
+                'completed': result['stats']['completed'],
+                'failed': result['stats']['failed'],
+                'grounded': 0,
+                'events': {'total': 0},
             }, headers=_cors_headers())
         except Exception as exc:
             logger.warning('collab failed: %s', exc)
@@ -424,7 +390,7 @@ class CollabHandler(web.View):
 @routes.get('/')
 @routes.get('/index.html')
 async def index_handler(request: web.Request):
-    return web.Response(body=WEBAPP_HTML.encode('utf-8'),
+    return web.Response(body=WEBAPP_HTML.replace('{{OWNER_NAME}}', OWNER_NAME).encode('utf-8'),
                         content_type='text/html', charset='utf-8',
                         headers={'Cache-Control': 'no-cache'})
 
@@ -443,6 +409,46 @@ async def favicon_handler(request: web.Request):
     if os.path.isfile(path):
         return web.FileResponse(path)
     return web.Response(status=404)
+
+
+# ── 文件上传/下载 ─────────────────────────────────────────────
+
+
+@routes.post('/api/upload')
+async def upload_handler(request: web.Request):
+    """上传文件到 data/uploads/ 目录。"""
+    if not _authed(request):
+        return web.json_response({'error': '需要认证'}, status=401, headers=_cors_headers())
+    upload_dir = os.path.join(DATA_DIR, 'uploads')
+    os.makedirs(upload_dir, exist_ok=True)
+    reader = await request.multipart()
+    saved = []
+    async for part in reader:
+        if part.filename:
+            # 防止路径穿越
+            safe_name = os.path.basename(part.filename)
+            dest = os.path.join(upload_dir, safe_name)
+            with open(dest, 'wb') as f:
+                while True:
+                    chunk = await part.read_chunk()
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            saved.append({'name': safe_name, 'size': os.path.getsize(dest)})
+    return web.json_response({'ok': True, 'files': saved}, headers=_cors_headers())
+
+
+@routes.get('/api/download/{filename}')
+async def download_handler(request: web.Request):
+    """下载 data/uploads/ 中的文件。"""
+    if not _authed(request):
+        return web.json_response({'error': '需要认证'}, status=401, headers=_cors_headers())
+    filename = request.match_info.get('filename', '')
+    safe_name = os.path.basename(filename)
+    path = os.path.join(DATA_DIR, 'uploads', safe_name)
+    if not os.path.isfile(path):
+        return web.json_response({'error': '文件不存在'}, status=404, headers=_cors_headers())
+    return web.FileResponse(path, headers=_cors_headers())
 
 
 # ═══════════════════════════════════════════
@@ -488,9 +494,140 @@ async def rate_limit_middleware(request: web.Request, handler):
     return await handler(request)
 
 
+def _load_tray_icon():
+    """加载托盘图标。优先使用 data/custom_icon.png，否则用内置默认。"""
+    custom = os.path.join(DATA_DIR, 'custom_icon.png')
+    if os.path.isfile(custom):
+        try:
+            from PIL import Image as _PILImage
+            return _PILImage.open(custom)
+        except Exception as exc:
+            logger.warning('自定义图标加载失败: %s', exc)
+    # 内置默认：生成一个 64x64 的绿色圆点 + "零"字
+    try:
+        from PIL import Image as _PILImage, ImageDraw as _PILDraw, ImageFont as _PILFont
+        img = _PILImage.new('RGBA', (64, 64), (0, 0, 0, 0))
+        draw = _PILDraw.Draw(img)
+        draw.ellipse([2, 2, 62, 62], fill='#22c55e', outline='#4ade80', width=2)
+        # 尝试找中文字体，找不到就用无字绿点
+        font = None
+        for _fp in ['C:/Windows/Fonts/msyh.ttc', 'C:/Windows/Fonts/yahei.ttf',
+                     'C:/Windows/Fonts/simsun.ttc']:
+            if os.path.isfile(_fp):
+                font = _PILFont.truetype(_fp, 28)
+                break
+        if font:
+            bbox = draw.textbbox((0, 0), '零', font=font)
+            tx = (64 - (bbox[2] - bbox[0])) // 2
+            ty = (64 - (bbox[3] - bbox[1])) // 2 - 2
+            draw.text((tx, ty), '零', fill='#171717', font=font)
+        return img
+    except Exception as exc:
+        logger.debug('内置图标生成失败: %s', exc)
+    return None
+
+
+def _start_tray(app, url):
+    """在系统托盘启动图标（pystray）。"""
+    try:
+        import pystray as _pystray
+        import threading as _threading
+        from PIL import Image as _PILImage
+    except ImportError:
+        logger.info('pystray 未安装，跳过托盘图标')
+        return
+
+    icon_img = _load_tray_icon() or _PILImage.new('RGBA', (32, 32), (0, 0, 0, 0))
+
+    def _open(icon, item):
+        import webbrowser as _wb
+        _wb.open(url)
+
+    def _restart(icon, item):
+        icon.stop()
+        app.shutdown()
+        logger.info('正在重启...')
+        os.execl(sys.executable, sys.executable, *sys.argv)
+
+    def _stop(icon, item):
+        icon.stop()
+        logger.info('用户通过托盘菜单退出')
+        os._exit(0)
+
+    menu = _pystray.Menu(
+        _pystray.MenuItem('打开浏览器', _open, default=True),
+        _pystray.Menu.SEPARATOR,
+        _pystray.MenuItem('重启', _restart),
+        _pystray.MenuItem('停止', _stop),
+    )
+
+    tray_icon = _pystray.Icon('zero', icon_img, '零 v5', menu)
+
+    # 在新线程中运行托盘
+    t = _threading.Thread(target=tray_icon.run, daemon=True)
+    t.start()
+    logger.info('系统托盘图标已启动')
+    return tray_icon
+
+
+@routes.post('/api/icon')
+async def upload_icon_handler(request: web.Request):
+    """上传自定义托盘图标。"""
+    if not _authed(request):
+        return web.json_response({'error': '需要认证'}, status=401, headers=_cors_headers())
+    reader = await request.multipart()
+    async for part in reader:
+        if part.filename:
+            ext = os.path.splitext(part.filename)[1].lower()
+            if ext not in ('.png', '.jpg', '.jpeg', '.ico', '.bmp'):
+                return web.json_response({'error': '不支持的图片格式，请使用 PNG/JPG/ICO/BMP'}, status=400, headers=_cors_headers())
+            dest = os.path.join(DATA_DIR, 'custom_icon.png')
+            with open(dest, 'wb') as f:
+                while True:
+                    chunk = await part.read_chunk()
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            return web.json_response({'ok': True, 'message': '图标已上传，重启后生效'}, headers=_cors_headers())
+    return web.json_response({'error': '未收到文件'}, status=400, headers=_cors_headers())
+
+
 def main():
-    logger.info('零 v5 · 启动中... http://%s:%s', HTTP_HOST, HTTP_PORT)
+    from config import find_available_port as _find_port, open_browser as _open_browser
+
+    # ── 加载预算配置 ──
+    try:
+        config_path = os.path.join(DATA_DIR, 'zero_config.json')
+        with open(config_path, 'r', encoding='utf-8') as f:
+            zero_cfg = json.load(f)
+        budget_cfg = zero_cfg.get('budget', {})
+        monthly = float(budget_cfg.get('monthly_usd', 0.50))
+        threshold = float(budget_cfg.get('auto_degrade_threshold', 0.05))
+        token_tracker.set_budget(monthly, threshold)
+        if monthly > 0:
+            logger.info('月预算: $%.2f, 降级阈值: $%.2f', monthly, threshold)
+    except Exception as exc:
+        logger.debug('预算配置加载失败（使用默认不限）: %s', exc)
+
+    # ── 启动时钟定时任务 ──
+    try:
+        from perception.clock import Clock as _Clock
+        from message_bus import bus as _message_bus
+        _clock = _Clock(_message_bus)
+        _clock.start()
+        logger.info('时钟已启动（每日报告/空闲提醒/夜间巡检）')
+    except Exception as exc:
+        logger.warning('时钟启动失败: %s', exc)
+
+    actual_port = _find_port()
+    if actual_port != HTTP_PORT:
+        logger.info('端口 %d 被占用，改用 %d', HTTP_PORT, actual_port)
+
+    url = f'http://{HTTP_HOST}:{actual_port}'
+    logger.info('零 v5 · 启动中... %s', url)
     logger.info('Agent: %d 位已注册', len(registry.list_all()))
+
+    _open_browser(url)
 
     app = web.Application(middlewares=[cors_middleware, rate_limit_middleware])
     app.add_routes(routes)
@@ -500,7 +637,15 @@ def main():
     if os.path.isdir(static_path):
         app.router.add_static('/assets/', path=static_path, name='assets')
 
-    web.run_app(app, host=HTTP_HOST, port=HTTP_PORT, print=None)
+    # 前端拆分后的静态文件（style.css, app.js）
+    webapp_static = os.path.join(ZERO_ROOT, 'interface', 'webapp_static')
+    if os.path.isdir(webapp_static):
+        app.router.add_static('/static/', path=webapp_static, name='webapp_static')
+
+    # ── 启动系统托盘图标 ──
+    _start_tray(app, url)
+
+    web.run_app(app, host=HTTP_HOST, port=actual_port, print=None)
 
 
 if __name__ == '__main__':

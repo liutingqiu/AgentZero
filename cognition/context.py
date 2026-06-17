@@ -7,6 +7,7 @@
 """
 
 from datetime import datetime
+from config import OWNER_NAME
 
 
 def build_context(working_memory, memory_manager):
@@ -36,7 +37,7 @@ def build_context(working_memory, memory_manager):
     parts.append(f'时间: {now.month}/{now.day} 周{weekday_cn} {period}')
     
     # 2. 主人身份
-    parts.append('主人: 柳橙')
+    parts.append(f'主人: {OWNER_NAME}')
     
     # 3. 工作记忆上下文
     wm_ctx = working_memory.get_context()

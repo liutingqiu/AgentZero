@@ -72,7 +72,7 @@ def _build_adapter(provider: str, cfg: dict) -> ModelAdapter | None:
         return AgnesAdapter(api_key=api_key)
     elif provider == 'openai':
         return OpenAIAdapter(api_key=api_key, api_url=api_url,
-                             model=model or 'gpt-4o')
+                             model=model or config.get('default_model', 'gpt-4o'))
     elif provider == 'ollama':
         return OllamaAdapter(model=model or 'llama3.1:8b',
                              base_url=cfg.get('base_url',

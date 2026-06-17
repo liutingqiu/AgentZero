@@ -21,7 +21,9 @@ import subprocess
 import sys as _sys
 import urllib.request
 
-from config import get_agnes_key, get_logger
+from config import get_agnes_key, get_logger, MODEL_NAMES
+from config import AGNES_API_URL as _AGNES_API
+from config import AGNES_IMAGE_URL as _AGNES_IMAGE_URL
 from utils.result import Result, ErrorCode, ok, err
 
 logger = get_logger('zero.tools')
@@ -393,9 +395,6 @@ def tool_scrapling_stealth(args):
 # Agnes AI 工具（惰性获取 key）
 # ═══════════════════════════════════════════
 
-_AGNES_API = 'https://apihub.agnes-ai.com/v1/chat/completions'
-
-
 @register('agnes_chat', 'Agnes 2.0 Flash 文本生成（免费）')
 def tool_agnes_chat(args):
     prompt = args.get('prompt', '')
@@ -409,7 +408,7 @@ def tool_agnes_chat(args):
         )
     try:
         payload = json.dumps({
-            'model': 'agnes-2.0-flash',
+            'model': MODEL_NAMES['agnes_text'],
             'messages': [
                 {'role': 'system', 'content': '你是零的免费AI引擎。简洁回复。'},
                 {'role': 'user', 'content': prompt},
@@ -428,7 +427,7 @@ def tool_agnes_chat(args):
         return ok({
             'reply': reply,
             'tokens': usage.get('total_tokens', 0),
-            'model': 'agnes-2.0-flash (免费)',
+            'model': f'{MODEL_NAMES["agnes_text"]} (免费)',
         })
     except Exception as exc:
         logger.warning('agnes_chat failed: %s', exc)
@@ -438,8 +437,6 @@ def tool_agnes_chat(args):
 # ═══════════════════════════════════════════
 # 生图工具（Agnes Image API）
 # ═══════════════════════════════════════════
-
-_AGNES_IMAGE_URL = 'https://apihub.agnes-ai.com/v1/images/generations'
 
 
 @register('image_generate', '生成图片（调用 Agnes Image API）')
@@ -452,10 +449,10 @@ def tool_image_generate(args):
     if not key:
         return err(ErrorCode.AUTH,
                    'Agnes API Key 未配置，无法生图',
-                   fallback='请主人配置 AGNES_API_KEY')
+                   fallback='请先配置 AGNES_API_KEY')
     try:
         payload = json.dumps({
-            'model': 'agnes-image-2.1-flash',
+            'model': MODEL_NAMES['agnes_image'],
             'prompt': prompt,
             'n': args.get('n', 1),
             'size': args.get('size', '1024x1024'),
@@ -475,6 +472,112 @@ def tool_image_generate(args):
     except Exception as exc:
         logger.warning('image_generate failed: %s', exc)
         return err(ErrorCode.MODEL_UNAVAILABLE, f'生图失败: {exc}')
+
+
+# ═══════════════════════════════════════════
+# Browser Use（浏览器自动化）
+# ═══════════════════════════════════════════
+
+_BROWSER_USE_AVAILABLE = False
+try:
+    import asyncio as _asyncio
+    from browser_use import Agent as _BrowserAgent, BrowserProfile as _BP
+    from browser_use.llm.openai.chat import ChatOpenAI as _BU_ChatOpenAI
+    _BROWSER_USE_AVAILABLE = True
+except ImportError:
+    pass
+
+# 副屏配置
+_BROWSER_SECONDARY_X = -2560
+_BROWSER_SECONDARY_Y = -106
+_BROWSER_WIDTH = 2560
+_BROWSER_HEIGHT = 1600
+
+
+def _run_browser_async(task: str, headless: bool = False) -> dict:
+    """在异步循环中运行 Browser Use Agent。"""
+    api_key = os.environ.get('DEEPSEEK_API_KEY', '')
+    if not api_key:
+        return {'ok': False, 'error': 'DEEPSEEK_API_KEY 未设置'}
+
+    async def _run():
+        llm = _BU_ChatOpenAI(
+            model='deepseek-chat',
+            api_key=api_key,
+            base_url='https://api.deepseek.com/v1',
+            dont_force_structured_output=True,
+        )
+        agent = _BrowserAgent(
+            task=task,
+            llm=llm,
+            browser_profile=_BP(
+                headless=headless,
+                window_position=None,
+                channel='msedge',
+                args=[
+                    f'--window-position={_BROWSER_SECONDARY_X},{_BROWSER_SECONDARY_Y}',
+                    f'--window-size={_BROWSER_WIDTH},{_BROWSER_HEIGHT}',
+                ],
+            ),
+            use_vision=False,
+            extend_system_message=(
+                '\nCRITICAL: Output ONLY raw JSON. '
+                'NEVER wrap in ```json code blocks. '
+                'Start with { and end with }. No markdown.'
+            ),
+        )
+        history = await agent.run()
+        return {'ok': True, 'result': str(history.final_result())}
+
+    try:
+        return _asyncio.run(_run())
+    except Exception as exc:
+        return {'ok': False, 'error': str(exc)}
+
+
+@register('browser_use', '打开浏览器执行任务（打开网页/填表/提取数据等）')
+def tool_browser_use(args):
+    """Browser Use 工具——让 AI Agent 操控浏览器完成指定任务。
+    
+    参数:
+        task: 任务描述，如 "打开 github.com/browser-use 查看 stars"
+        headless: 是否无头模式（默认 False，显示浏览器窗口）
+    """
+    if not _BROWSER_USE_AVAILABLE:
+        return err(ErrorCode.TOOL_FAILED,
+                   'Browser Use 未安装。请运行: pip install "browser-use[core]"')
+    task = args.get('task', '') or args.get('prompt', '')
+    if not task:
+        return err(ErrorCode.INVALID_INPUT, '缺少 task 参数（任务描述）')
+    headless = args.get('headless', False)
+
+    logger.info('browser_use: %s..', task[:80])
+    result = _run_browser_async(task, headless=headless)
+    if result.get('ok'):
+        return ok({'result': result['result'], 'task': task})
+    return err(ErrorCode.TOOL_FAILED, f'浏览器任务失败: {result.get("error")}')
+
+
+@register('browser_use_screenshot', '打开网页并截图')
+def tool_browser_use_screenshot(args):
+    """打开指定 URL 并截图返回页面信息。
+    
+    参数:
+        url: 要打开的网址
+    """
+    if not _BROWSER_USE_AVAILABLE:
+        return err(ErrorCode.TOOL_FAILED,
+                   'Browser Use 未安装。请运行: pip install "browser-use[core]"')
+    url = args.get('url', '')
+    if not url:
+        return err(ErrorCode.INVALID_INPUT, '缺少 url 参数')
+
+    task = f'Open {url}, wait for page to load, then call done with a brief summary of what you see.'
+    logger.info('browser_use_screenshot: %s', url[:80])
+    result = _run_browser_async(task, headless=False)
+    if result.get('ok'):
+        return ok({'summary': result['result'], 'url': url})
+    return err(ErrorCode.TOOL_FAILED, f'截图失败: {result.get("error")}')
 
 
 # ═══════════════════════════════════════════

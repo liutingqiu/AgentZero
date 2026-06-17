@@ -131,9 +131,9 @@ def _handle_search(text: str) -> str:
 # ═══════════════════════════════════════════
 
 def handle_collaborate(text: str) -> str:
-    """多Agent协作模式——Planner→Executor→Critic→Synthesizer。"""
-    from multi_agent import collaborate
-    result = collaborate(text, call_llm)
+    """多Agent协作模式——由 GoalOrchestrator 接管。"""
+    from action.goal_orchestrator import GoalOrchestrator
+    result = GoalOrchestrator(llm_caller=call_llm).run(text)
     if result['status'] == 'done':
         return result['answer']
     return f'[{result["status"]}] {result["answer"]}'

@@ -10,7 +10,7 @@
 
 import threading
 
-from config import get_logger
+from config import get_logger, MODEL_NAMES
 
 logger = get_logger('zero.registry')
 
@@ -271,11 +271,13 @@ def seed_defaults(registry, llm_caller=None, image_caller=None):
     """
 
     # Agnes Text —— 免费模型，主聊天
+    from config import OWNER_NAME as _owner_name
+
     def _agnes_text_exec(prompt, caps, extra):
         if not llm_caller:
             raise RuntimeError('未配置 LLM caller（请检查 AGNES_API_KEY）')
         sys_prompt = extra.get('system', '') or (
-            '你是零，一款面向柳橙（主人）的智能助手。'
+            f'你是零，一款面向{_owner_name}（主人）的智能助手。'
             '中文回复，简洁但信息完整。'
             '使用 Markdown 格式组织长回答，代码用 ``` 包裹。'
         )
@@ -293,6 +295,7 @@ def seed_defaults(registry, llm_caller=None, image_caller=None):
             raise RuntimeError('未配置 LLM caller')
         sys_prompt = extra.get('system', '') or (
             '你是 Reasonix，擅长代码生成、调试和复杂推理。'
+            f'当前用户是{_owner_name}。'
             '中文回复。代码必须完整可运行，必要时给出分步解释。'
         )
         # prefer_free=False 让 call_llm 走 DeepSeek 通道
@@ -339,7 +342,7 @@ def seed_defaults(registry, llm_caller=None, image_caller=None):
         capabilities=['chat', 'reasoning', 'code_generation',
                        'translation', 'summarization'],
         cost=0, latency_ms=1200, reliability=0.82,
-        endpoint='agnes_api://agnes-2.0-flash',
+        endpoint=f'agnes_api://{MODEL_NAMES["agnes_text"]}',
         executor=_agnes_text_exec,
     )
 
@@ -356,7 +359,7 @@ def seed_defaults(registry, llm_caller=None, image_caller=None):
         'agnes_image', 'Agnes Image 2.1',
         capabilities=['image_generation', 'image_editing'],
         cost=0, latency_ms=5000, reliability=0.72,
-        endpoint='agnes_api://agnes-image-2.1-flash',
+        endpoint=f'agnes_api://{MODEL_NAMES["agnes_image"]}',
         executor=_agnes_image_exec,
     )
 

@@ -7,23 +7,47 @@ asyncio + httpx 非阻塞调用，解决线程池饥饿。
   reply = await async_call_llm(messages=[...])
 """
 
-import json
+import asyncio
 import logging
-from config import (AGNES_API_URL, get_agnes_key, get_api_key, get_api_url)
+from config import get_logger
 from utils.text_helpers import truncate
 
-logger = logging.getLogger('zero.async_llm')
+from cognition.token_tracker import tracker as token_tracker
+from model_adapter import load_adapters
 
-AGNES_MODELS = {
-    'text': 'agnes-2.0-flash',
-    'image': 'agnes-image-2.1-flash',
-    'video': 'agnes-video-v2.0',
-}
+logger = get_logger('zero.async_llm')
 
-def _select_model(task_type='text'):
-    if task_type in ('image', 'image_generation'): return AGNES_MODELS['image']
-    if task_type in ('video', 'video_generation'): return AGNES_MODELS['video']
-    return AGNES_MODELS['text']
+# ── 共享适配器池 ─────────────────────────────────────
+_ADAPTERS: list = []
+
+def _init_adapters():
+    global _ADAPTERS
+    if _ADAPTERS:
+        return
+    _ADAPTERS = load_adapters({})
+
+_init_adapters()
+
+
+def _pick_candidates(task_type='text', prefer_free=True):
+    """从已发现的适配器中选候选链（与 llm.py 共享逻辑）。"""
+    candidates = []
+    for a in _ADAPTERS:
+        if prefer_free and not a.meta.is_free:
+            continue
+        caps = a.capabilities()
+        if task_type in ('image', 'image_generation') and caps.get('image_generation', 0) > 0:
+            candidates.append(a)
+        elif task_type in ('video', 'video_generation'):
+            continue
+        elif caps.get('chat', 0) > 0 or caps.get('reasoning', 0) > 0:
+            candidates.append(a)
+    if not candidates and not prefer_free:
+        for a in _ADAPTERS:
+            caps = a.capabilities()
+            if caps.get('chat', 0) > 0 or caps.get('reasoning', 0) > 0:
+                candidates.append(a)
+    return candidates
 
 
 async def async_call_llm(messages=None, *, system=None, prompt=None,
@@ -33,9 +57,8 @@ async def async_call_llm(messages=None, *, system=None, prompt=None,
     """异步 LLM 调用——非阻塞，协程友好。
 
     支持: messages 列表 或 (system, prompt) 旧式兼容。
-    候选链: Agnes(免费) → DeepSeek(付费)
+    候选链: 通过 model_adapter 层自动发现。
     """
-    import httpx
     from semantic_gateway import process as gateway_process
     from behavior_canon import (canonicalize as canon_behavior,
                                 validate_output, retry_feedback, Path, SchemaMode)
@@ -67,70 +90,88 @@ async def async_call_llm(messages=None, *, system=None, prompt=None,
         safe_msgs.append({'role': role, 'content': truncate(content, max_len)})
     msgs = safe_msgs
 
-    # 候选链
-    candidates = []
-    ak = get_agnes_key()
-    if prefer_free and ak:
-        candidates.append({'name': 'agnes', 'url': AGNES_API_URL,
-                           'key': ak, 'model': _select_model(task_type)})
-    dk = get_api_key()
-    du = get_api_url()
-    if dk:
-        candidates.append({'name': 'deepseek', 'url': du, 'key': dk,
-                           'model': 'deepseek-chat'})
+    # 通过 model_adapter 层选择候选模型
+    candidates = _pick_candidates(task_type, prefer_free)
     if not candidates:
-        return '[模型不可用]'
+        return '[模型不可用：请配置 AGNES_API_KEY 或 LLM_API_KEY 环境变量]'
+
+    # ── LLM 响应缓存：同 session 内相同 prompt 直接命中 ──
+    cache_key = token_tracker.make_hash(
+        msgs, candidates[0].meta.adapter_id, temperature)
+    cached_reply = token_tracker.cache_get(cache_key)
+    if cached_reply is not None:
+        logger.debug('缓存命中 [%s] %s..', cache_key[:8], task_text[:40])
+        token_tracker.record(
+            agent_id=agent_id or candidates[0].meta.adapter_id,
+            model=candidates[0].meta.adapter_id,
+            prompt_tokens=0, completion_tokens=len(cached_reply),
+            cached=True, task_type=task_type,
+        )
+        return cached_reply
 
     max_retries = 2 if ctx.schema_mode == SchemaMode.STRICT else 0
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
-        for c in candidates:
-            retries = 0
-            while retries <= max_retries:
-                try:
-                    resp = await client.post(
-                        c['url'],
-                        json={'model': c['model'], 'messages': msgs,
-                              'max_tokens': 2000, 'temperature': temperature},
-                        headers={'Authorization': f'Bearer {c["key"]}',
-                                 'Content-Type': 'application/json'},
-                    )
-                    data = resp.json()
-                    content = data['choices'][0]['message']['content']
-                    if not content:
-                        logger.warning('[%s] 空内容', c['name'])
-                        break
-
-                    passed, issues = validate_output(
-                        content, ctx.control_strength, ctx.task_type,
-                        mode=ctx.schema_mode)
-                    if passed or retries >= max_retries:
-                        if not passed:
-                            logger.debug('校验未通过: %s', issues)
-                        from behavior_canon import record_outcome, auto_ground_v3
-                        record_outcome(
-                            task_type=ctx.task_type, agent_id=ctx.agent_id,
-                            control_raw=ctx.control_raw,
-                            control_final=ctx.control_strength,
-                            success=passed, output_quality=0.7 if passed else 0.3)
-                        if not skip_ground:
-                            from app.services.llm import call_llm
-                            auto_ground_v3(content, ctx.task_type, ctx.agent_id,
-                                           ctx.control_strength, llm_caller=call_llm)
-                        return content
-
-                    retries += 1
-                    msgs.append({'role': 'user',
-                                 'content': retry_feedback(issues, retries)})
-                except Exception as exc:
-                    logger.warning('[%s] 失败: %s', c['name'], exc)
+    for adapter in candidates:
+        retries = 0
+        while retries <= max_retries:
+            try:
+                # 同步适配器 → 在线程池中执行
+                result = await asyncio.to_thread(
+                    adapter.chat, msgs,
+                    temperature=temperature,
+                    max_tokens=2000,
+                    timeout=timeout,
+                )
+                if not result.ok:
+                    logger.warning('[%s] 适配器返回错误: %s', adapter.meta.name, result.error)
                     break
+
+                content = result.data
+                if not content:
+                    logger.warning('[%s] 空内容', adapter.meta.name)
+                    break
+
+                # 写入缓存（首个成功的候选模型）
+                token_tracker.cache_set(cache_key, content)
+
+                # 记录 Token 消耗（与 llm.py 对齐）
+                token_tracker.record(
+                    agent_id=agent_id or adapter.meta.adapter_id,
+                    model=adapter.meta.adapter_id,
+                    prompt_tokens=0,
+                    completion_tokens=len(content),
+                    cached=False, task_type=task_type,
+                )
+
+                passed, issues = validate_output(
+                    content, ctx.control_strength, ctx.task_type,
+                    mode=ctx.schema_mode)
+                if passed or retries >= max_retries:
+                    if not passed:
+                        logger.debug('校验未通过: %s', issues)
+                    from behavior_canon import record_outcome, auto_ground_v3
+                    record_outcome(
+                        task_type=ctx.task_type, agent_id=ctx.agent_id,
+                        control_raw=ctx.control_raw,
+                        control_final=ctx.control_strength,
+                        success=passed, output_quality=0.7 if passed else 0.3)
+                    if not skip_ground:
+                        from app.services.llm import call_llm
+                        auto_ground_v3(content, ctx.task_type, ctx.agent_id,
+                                       ctx.control_strength, llm_caller=call_llm)
+                    return content
+
+                retries += 1
+                msgs.append({'role': 'user',
+                             'content': retry_feedback(issues, retries)})
+            except Exception as exc:
+                logger.warning('[%s] 失败: %s', adapter.meta.name, exc)
+                break
     return '[所有模型不可用]'
 
 
 def call_llm_async(messages=None, **kwargs) -> str:
     """同步包装——在事件循环中运行 async_call_llm。"""
-    import asyncio
     try:
         loop = asyncio.get_running_loop()
         # 已在事件循环中 → 直接 await（需要调用方是 async）

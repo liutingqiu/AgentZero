@@ -1,0 +1,31 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+
+# 本地配置（含密钥）
+.env
+*.json
+!requirements.txt
+
+# 数据（运行时挂载卷）
+data/
+
+# 开发工具
+tests/
+scripts/*.py
+memory/
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# 编辑器
+.vscode/
+.idea/

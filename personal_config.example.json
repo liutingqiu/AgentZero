@@ -1,0 +1,49 @@
+{
+  "说明": "复制此文件为 personal_config.json，填入你的配置后重启零即可",
+  "auth": {
+    "enabled": false,
+    "passphrase": "",
+    "unlock_hours": 2
+  },
+  "owner": {
+    "name": "你的名字",
+    "email": ""
+  },
+  "paths": {
+    "extra_roots": [
+      "E:/project/tools/agent-system",
+      "E:/project/tools/news-factory",
+      "E:/project/tools/MoneyPrinterTurbo"
+    ],
+    "watch_root": "E:/project"
+  },
+  "platforms": {
+    "twitter":      { "auth_token": "", "ct0": "" },
+    "weibo":        { "subp": "", "xsrf": "" },
+    "bilibili":     { "dede_user_id": "", "bili_jct": "" },
+    "zhihu":        { "z_c0": "" },
+    "youtube":      { "sapisid": "" },
+    "instagram":    { "sessionid": "" },
+    "facebook":     { "c_user": "", "xs": "" },
+    "linkedin":     { "li_at": "" },
+    "douyin":       { "sessionid": "" },
+    "xiaohongshu":  { "a1": "", "web_id": "" },
+    "github":       { "user_session": "" }
+  },
+  "tools": {
+    "mpt_api": "http://localhost:8080",
+    "news_factory": "E:/project/tools/news-factory",
+    "darbot": false,
+    "ollama": {
+      "enabled": false,
+      "base_url": "http://localhost:11434"
+    }
+  },
+  "skills": {
+    "enabled": false,
+    "dirs": [
+      "C:/Users/admin/.claude/skills",
+      "C:/Users/admin/AppData/Roaming/BitFun/skills"
+    ]
+  }
+}

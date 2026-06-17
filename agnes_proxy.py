@@ -12,11 +12,11 @@ import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from config import get_agnes_key, get_logger
+from config import get_agnes_key, get_logger, MODEL_NAMES, AGNES_API_URL
 
 logger = get_logger('zero.agnes_proxy')
 
-AGNES_URL = 'https://apihub.agnes-ai.com/v1/chat/completions'
+AGNES_URL = AGNES_API_URL
 PORT = int(os.environ.get('AGNES_PROXY_PORT', '8899'))
 
 
@@ -46,7 +46,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 'object': 'list',
                 'data': [
                     {'id': 'gpt-5.3-codex', 'object': 'model'},
-                    {'id': 'agnes-2.0-flash', 'object': 'model'},
+                    {'id': MODEL_NAMES['agnes_text'], 'object': 'model'},
                 ],
             })
         else:
@@ -90,7 +90,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 return
 
             payload = json.dumps({
-                'model': 'agnes-2.0-flash',
+                'model': MODEL_NAMES['agnes_text'],
                 'messages': messages,
                 'max_tokens': min(int(req.get('max_output_tokens', 2000)), 4000),
                 'temperature': float(req.get('temperature', 0.7)),

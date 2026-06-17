@@ -1,73 +1,99 @@
-# ⚡ 零 (Zero) — AI OS Kernel
+# ⚡ 零 (Zero) — AI Agent Runtime
 
-> ⚠️ **原型阶段，非正式产品。** 仅供学习和演示。
+> **半成品 / Work in Progress** — 后端架构已完善，前端设计请暂时忽略。
+> Backend architecture is solid. Frontend design is a known work-in-progress — please ignore the visuals for now.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Status](https://img.shields.io/badge/Status-Prototype-orange)]()
+[![Status](https://img.shields.io/badge/Status-Alpha-yellow)]()
 
 ---
 
-**一句话落地**：输入任务，AI 团队自动协作完成。
+**EN** | Zero is an AI Agent orchestration runtime. It takes a goal, breaks it into a step chain, executes each step, and delivers the result — all through a single LLM.
+
+**CN** | 零是一个 AI Agent 编排运行时。接收你的目标，拆成步骤链，逐步执行，输出结果。只需要一个 LLM 模型就能跑。
 
 ---
 
-## ⚠️ 故障排查
+## 壳子哲学 / Shell Philosophy
 
-看到 `[所有模型不可用，请稍后重试]`？
+**EN** | Zero is a kernel, not a toolbox. You clone it, plug in your API keys, and it runs. Want social posting? Video generation? Custom tools? You implement them through extension interfaces. Zero stays lean — you own your extensions.
 
-1. 确认 API Key 已配置：`cp .env.example .env` 并填入真实 Key
-2. 确认网络能访问 API 地址（Agnes: apihub.agnes-ai.com / DeepSeek: api.deepseek.com）
-3. 免费 API (Agnes) 有时不稳定，换 DeepSeek 试试
-4. 如果都没配，系统会直接返回这个提示——这是正常的
-
----
-
-## 是什么
-
-零是一个**多 Agent 协作平台**——你说一句话，系统自动调度 Planner（规划者）、Executor（执行者）、Critic（审查者）、Synthesizer（整合者）四个 AI Agent 协作完成任务，**实时展示思考过程**。
+**CN** | 零是内核，不是工具箱。clone 下来，填入 API Key，就能跑。想接入社交发帖、视频生成、自定义工具？通过扩展接口自己加。零保持精简，扩展你说了算。
 
 ```
-你说："帮我做一个响应式网站"
-  ↓
-📋 Planner   → 拆解为 3 个步骤
-🔧 Executor  → 逐步执行（写 HTML → 写 CSS → 写 JS）
-🔍 Critic    → 审查每步结果，发现问题自动修正
-📝 Synthesizer → 整合输出完整网站代码
-  ↓
-✅ 完成
+git clone → pip install -r requirements.txt → 双击 start.bat
+                                                    ↓
+                                        已可用：AI 对话 + 任务编排
+                                                    ↓
+                           可选：配置 personal_config.json
+                           接入你的社交账号、工具链、本地模型
+                                                    ↓
+                                        你的个性化零
 ```
 
 ---
 
-## 快速开始
+## 启动 / Quick Start
 
-### Docker（推荐）
-
-```bash
-# 1. 配置 API Key
-cp .env.example .env
-# 编辑 .env，填入你的 AGNES_API_KEY 和 LLM_API_KEY
-
-# 2. 启动
-docker compose up -d
-
-# 3. 打开
-open http://localhost:5052
-```
-
-### 本地运行
+### 第一次使用 / First Time
 
 ```bash
 # 安装依赖
-pip install aiohttp httpx
+E:\python\python.exe -m pip install -r requirements.txt
 
-# 设置环境变量
-export AGNES_API_KEY=your_key    # Agnes 免费 API
-export LLM_API_KEY=your_key      # DeepSeek API
+# 配置 API Key（至少配一个 / at least one required）
+cp .env.example .env
+# 编辑 .env，填入 LLM_API_KEY
+```
 
-# 启动
-python zero_server.py
+### 每次启动 / Every Time
+
+**双击 `start.bat`**
+
+它会：
+- 无窗口启动零
+- 自动打开浏览器 → `http://127.0.0.1:5052`
+
+**停止：** 双击 `stop.bat`
+
+### Docker
+
+```bash
+cp .env.example .env
+docker compose up -d
+```
+
+---
+
+## 环境变量 / Environment Variables
+
+| 变量 | 必填 | 说明 |
+|------|:--:|------|
+| `LLM_API_KEY` | **是** | 主力模型密钥（DeepSeek 推荐） |
+| `LLM_API_URL` | 否 | 模型 API 地址，默认 DeepSeek |
+| `AGNES_API_KEY` | 否 | 免费备选模型（Agnes AI） |
+| `OWNER_NAME` | 否 | 你的称呼，默认 "User" |
+| `ZERO_PORT` | 否 | 端口，默认 5052 |
+
+---
+
+## 架构 / Architecture
+
+```
+zero/
+├── app/api/           # HTTP 层 (aiohttp + 16 API 端点)
+├── app/services/      # LLM 服务 + 缓存 + 降级
+├── action/            # 20 工具 + 单Agent流程链 + Agent注册表
+├── cognition/         # 三层上下文记忆 + Token追踪
+├── security/          # 越狱检测 + 行为指纹 + 沙箱
+├── model_adapter/     # DeepSeek/Agnes/OpenAI/Ollama 适配器
+├── interfaces/        # 插件扩展接口（社交/视频/技能/存储）
+├── behavior/          # 行为评估 + 温度策略
+├── perception/        # 文件监听 + 时钟 + 系统监控
+├── config.py          # 集中配置
+├── start.bat          # 一键启动
+└── API_DOCS.md        # 完整 API 文档
 ```
 
 ---
@@ -77,53 +103,18 @@ python zero_server.py
 | 端点 | 说明 |
 |------|------|
 | `GET /health` | 健康检查 |
-| `POST /api/chat` | 单 Agent 对话 |
-| `GET /api/chat/stream` | SSE 流式聊天 |
-| `POST /api/collab` | 多 Agent 协作 |
-| `GET /api/collab/stream` | SSE 流式协作（实时黑板） |
+| `POST /api/chat` | 对话 |
+| `GET /api/chat/stream` | SSE 流式对话 |
+| `POST /api/collab` | 多步骤协作 |
+| `GET /api/collab/stream` | SSE 流式协作 |
+| `GET /api/tokens` | Token 统计 |
+| `POST /api/upload` | 文件上传 |
+| `GET /api/download/{file}` | 文件下载 |
 
----
-
-## 架构
-
-```
-zero/
-├── app/api/           # HTTP 层 (aiohttp)
-├── app/services/      # LLM 服务 (同步+异步)
-├── behavior/          # 行为控制 (Gate+Control+Canon+Calibrate+Evaluate+Ground)
-├── multi_agent/       # 多Agent (Events+Consensus+Contracts+Blackboard+Agents+Orchestrator)
-├── semantic_gateway.py # 语义网关 (L1阻断+L2标准化+L3约束)
-├── infrastructure/    # 沙箱 (Docker/Windows/NoOp)
-└── security/          # 安全 (Guard+Sandbox)
-```
-
----
-
-## 接入模型
-
-支持任意 **OpenAI 兼容接口**——有 API Key 就能接。配置两行即可：
-
-```bash
-AGNES_API_KEY=sk-xxx    # 免费文本+生图 (推荐)
-LLM_API_KEY=sk-xxx      # DeepSeek / GPT / 任何兼容接口
-LLM_API_URL=https://api.deepseek.com/v1/chat/completions
-```
-
-也支持本地模型 (Ollama)，在 `zero_config.json` 里加一行就行。
-
----
-
-## 🐛 参与贡献
-
-发现 Bug 或有建议？欢迎 [提交 Issue](https://github.com/liutingqiu/zero/issues)。
-
----
-
-> **Releases** = 打包好的稳定版本，别人下载 zip 就能用。
-> **Packages** = 发布到包管理器（如 pip），`pip install zero` 一键安装。零目前还没发。
+完整文档 → [API_DOCS.md](API_DOCS.md)
 
 ---
 
 ## License
 
-MIT © 柳橙
+MIT © 零 Contributors

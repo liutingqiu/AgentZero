@@ -301,7 +301,7 @@ def seed(task_type: str, input_text: str, extra: str = '') -> str:
 # ═══════════════════════════════════════════
 
 def build_system(
-    identity: str = '你是零，主人的智能助手。',
+    identity: str | None = None,
     agent_id: str = '',
     control_strength: float = 0.5,
     task_type: str = 'chat',
@@ -310,7 +310,12 @@ def build_system(
     """构建 system prompt：规范基础 + Agent 残差叠加。
 
     不再使用固定 profile 模板。基于 control_strength 调节语气。
+    identity 默认使用 config.SYSTEM_IDENTITY，可通过环境变量 ZERO_SYSTEM_IDENTITY 配置。
     """
+    from config import SYSTEM_IDENTITY as _default_identity
+    if identity is None:
+        identity = _default_identity
+
     now = datetime.now()
     weekday_cn = ['一', '二', '三', '四', '五', '六', '日'][now.weekday()]
     hour = now.hour
@@ -415,7 +420,7 @@ def canonicalize(
     task_text: str = '',
     task_type: str | None = None,
     agent_id: str = '',
-    agent_identity: str = '你是零，主人的智能助手。',
+    agent_identity: str | None = None,
     extra_rules: str = '',
     confidence: float = 0.5,
 ) -> BehaviorContext:

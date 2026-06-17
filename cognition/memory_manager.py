@@ -260,6 +260,74 @@ def save_conversation_summary(topic, summary, emotion='normal',
         return False
 
 
+def save_persistent_memory(topic: str, content: str, tags: str = ''):
+    """写入持久化记忆（跨会话保留）。
+    
+    topic 用于检索，content 是完整内容，tags 用于分类。
+    """
+    try:
+        with _connect() as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS persistent_memory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    topic TEXT UNIQUE,
+                    content TEXT,
+                    tags TEXT,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            now = datetime.now().isoformat(timespec='seconds')
+            conn.execute('''
+                INSERT INTO persistent_memory(topic, content, tags, updated_at)
+                VALUES(?,?,?,?)
+                ON CONFLICT(topic) DO UPDATE SET
+                    content=excluded.content,
+                    tags=excluded.tags,
+                    updated_at=excluded.updated_at
+            ''', (topic, content, tags, now))
+        return True
+    except sqlite3.Error as exc:
+        logger.warning('save_persistent_memory failed: %s', exc)
+        return False
+
+
+def get_persistent_memory(topic: str) -> str | None:
+    """读取持久化记忆。返回 content 或 None。"""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                'SELECT content FROM persistent_memory WHERE topic = ?',
+                (topic,),
+            ).fetchone()
+            return row['content'] if row else None
+    except sqlite3.Error as exc:
+        logger.warning('get_persistent_memory failed: %s', exc)
+        return None
+
+
+def list_persistent_memories(limit=20) -> list:
+    """列出所有持久化记忆主题。"""
+    try:
+        with _connect() as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS persistent_memory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    topic TEXT UNIQUE,
+                    content TEXT,
+                    tags TEXT,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            rows = conn.execute(
+                'SELECT topic, tags, updated_at FROM persistent_memory ORDER BY updated_at DESC LIMIT ?',
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except sqlite3.Error as exc:
+        logger.warning('list_persistent_memories failed: %s', exc)
+        return []
+
+
 def get_conversation_summaries(days=7, limit=50):
     try:
         with _connect() as conn:
