@@ -7,49 +7,51 @@
 P2: 实现 SandboxInterface 抽象接口，支持多平台。
 """
 
-import os, sys, shutil, subprocess, json, ctypes, atexit
-from ctypes import wintypes
+import os, sys, shutil, subprocess, json, atexit
 from datetime import datetime
-
-from infrastructure.sandbox.interface import SandboxInterface
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SANDBOX_DIR = os.path.join(BASE, 'data', 'sandbox')
 os.makedirs(SANDBOX_DIR, exist_ok=True)
 
-# ── Windows Job Object API ──
-kernel32 = ctypes.windll.kernel32
+import ctypes
+if sys.platform == 'win32':
+    from ctypes import wintypes
+    kernel32 = ctypes.windll.kernel32
 
-class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
-    _fields_ = [
-        ("PerProcessUserTimeLimit", ctypes.c_int64),
-        ("PerJobUserTimeLimit", ctypes.c_int64),
-        ("LimitFlags", ctypes.c_uint32),
-        ("MinimumWorkingSetSize", ctypes.c_size_t),
-        ("MaximumWorkingSetSize", ctypes.c_size_t),
-        ("ActiveProcessLimit", ctypes.c_uint32),
-        ("Affinity", ctypes.c_size_t),
-        ("PriorityClass", ctypes.c_uint32),
-        ("SchedulingClass", ctypes.c_uint32),
-    ]
+    class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", ctypes.c_uint32),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", ctypes.c_uint32),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", ctypes.c_uint32),
+            ("SchedulingClass", ctypes.c_uint32),
+        ]
 
-class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
-    _fields_ = [
-        ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
-        ("IoInfo", ctypes.c_byte * 48),
-        ("ProcessMemoryLimit", ctypes.c_size_t),
-        ("JobMemoryLimit", ctypes.c_size_t),
-        ("PeakProcessMemoryUsed", ctypes.c_size_t),
-        ("PeakJobMemoryUsed", ctypes.c_size_t),
-    ]
+    class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+            ("IoInfo", ctypes.c_byte * 48),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
 
-JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x0100
-JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 0x0008
-JOB_OBJECT_LIMIT_JOB_TIME = 0x0004
-JobObjectExtendedLimitInformation = 9
+    JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x0100
+    JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 0x0008
+    JOB_OBJECT_LIMIT_JOB_TIME = 0x0004
+    JobObjectExtendedLimitInformation = 9
+
+else:
+    kernel32 = None
 
 
-class Sandbox(SandboxInterface):
+class Sandbox:
     """隔离执行环境（Windows Job Object）。
 
     安全机制:
@@ -72,7 +74,10 @@ class Sandbox(SandboxInterface):
     
     def setup(self):
         os.makedirs(self.test_dir, exist_ok=True)
-        atexit.register(self.cleanup)  # v2: 进程异常退出时清理（GPT-4o）
+        atexit.register(self.cleanup)
+        if sys.platform != 'win32' or kernel32 is None:
+            self._log('平台不支持 Job Object，降级运行', 'warn')
+            return True
         try:
             hjob = kernel32.CreateJobObjectW(None, None)
             if hjob:
@@ -172,7 +177,7 @@ class Sandbox(SandboxInterface):
     
     def cleanup(self):
         self._cleanup_firewall()
-        if self._job_handle:
+        if self._job_handle and kernel32 is not None:
             try: kernel32.CloseHandle(self._job_handle)
             except: pass
         if os.path.exists(self.test_dir):
@@ -182,3 +187,35 @@ class Sandbox(SandboxInterface):
         if not self.steps: return 'no_tests'
         fails = sum(1 for s in self.steps if s['result'] != 'pass')
         return '全部通过' if fails == 0 else f'{fails}/{len(self.steps)} 失败'
+
+
+# ═══════════════════════════════════════════
+# 权限等级检查（供 tools.py 调用）
+# ═══════════════════════════════════════════
+
+def check_permission(level: str, action: str, target: str = '') -> tuple:
+    """检查权限等级是否允许执行某操作。
+    
+    Args:
+        level: plan / auto / yolo
+        action: read / write / execute
+        target: 操作目标路径或命令
+    
+    Returns:
+        (allowed: bool, reason: str) — allowed 为 False 时 reason 说明原因
+    """
+    if level == 'yolo':
+        return True, 'ok'
+    
+    if level == 'plan':
+        if action == 'execute':
+            return False, 'plan 模式下禁止执行命令'
+        if action == 'write':
+            return False, 'plan 模式下禁止写入文件'
+        # read 操作由调用方做路径白名单检查
+        return True, 'ok'
+    
+    # auto 模式
+    if action == 'execute':
+        return False, 'approval_required'  # 需要用户审批
+    return True, 'ok'

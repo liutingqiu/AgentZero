@@ -1,29 +1,54 @@
 # 零 · 行为控制层
-# 向后兼容——从子模块重导出所有符号
+# 行为模块已合并为 behavior_canon.py
+# behavior/ 子目录文件为遗留碎片，不再使用
+# 所有导出重定向到 behavior_canon
 
-from behavior.control import (
-    compute_control_strength, estimate_uncertainty,
+import warnings
+warnings.warn(
+    'behavior/ 子模块已废弃，请直接从 behavior_canon 导入',
+    DeprecationWarning, stacklevel=2
 )
-from behavior.profiles import (
-    SchemaMode, TempPolicy, temperature_policy, schema_mode,
-    validate_output, BehaviorProfile, PROFILES,
-)
-from behavior.canonical import (
-    canonicalize, build_system, BehaviorContext, classify, seed,
-    get_profile, get_temperature, list_profiles,
-)
-from behavior.calibration import (
-    ControlMemory, ControlRecord, calibrated_strength,
-    record_outcome, record_feedback, get_control_memory,
-)
+
 from behavior_canon import (
-    synthetic_evaluate, auto_ground, _llm_evaluate,
-)
-from behavior.grounding import (
-    GroundTruth, GroundedJudge, ExternalAnchorGate, EntropyInjector,
-    ExternalSignalGateway, reality_check, drift_align,
-    auto_ground_v2, auto_ground_v3, record_signal_source,
-    get_anchor_penalty, inject_entropy, ingest_external,
-    get_external_score, validate_reward, RewardValidation,
-    JudgeRegistry, CalibratedConfidence, multi_judge,
+    BehaviorContext,
+    CalibratedConfidence,
+    ControlMemory,
+    ControlRecord,
+    EntropyInjector,
+    ExternalAnchorGate,
+    ExternalSignalGateway,
+    JudgeRegistry,
+    Path,
+    RewardValidation,
+    SchemaMode,
+    TempPolicy,
+    auto_ground,
+    auto_ground_v2,
+    auto_ground_v3,
+    build_system,
+    calibrated_strength,
+    canonicalize,
+    classify,
+    compute_control_strength,
+    drift_align,
+    estimate_uncertainty,
+    get_agent_residual,
+    get_anchor_penalty,
+    get_control_memory,
+    get_external_score,
+    ingest_external,
+    inject_entropy,
+    multi_judge,
+    reality_check,
+    record_feedback,
+    record_objective,
+    record_outcome,
+    record_signal_source,
+    schema_mode,
+    seed,
+    select_path,
+    synthetic_evaluate,
+    temperature_policy,
+    validate_output,
+    validate_reward,
 )

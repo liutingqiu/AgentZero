@@ -72,7 +72,7 @@ def _build_adapter(provider: str, cfg: dict) -> ModelAdapter | None:
         return AgnesAdapter(api_key=api_key)
     elif provider == 'openai':
         return OpenAIAdapter(api_key=api_key, api_url=api_url,
-                             model=model or config.get('default_model', 'gpt-4o'))
+                             model=model or cfg.get('default_model', 'gpt-4o'))
     elif provider == 'ollama':
         return OllamaAdapter(model=model or 'llama3.1:8b',
                              base_url=cfg.get('base_url',
@@ -101,7 +101,7 @@ def _auto_discover(config: dict) -> list[ModelAdapter]:
         adapters.append(ollama)
 
     # OpenAI 需要显式配置 API key，不自动检测
-    openai_key = config.get('openai', {}).get('api_key', '')
+    openai_key = config.get('openai', {}).get('api_key', '') if config else ''
     if openai_key:
         openai = OpenAIAdapter(api_key=openai_key)
         if openai.is_available():

@@ -60,6 +60,7 @@ def validate(messages: list[dict]) -> list[dict]:
 
         # ── V1: 标准 role 检查 ──
         if role not in VALID_ROLES:
+            _last_violation = f'非标准role: {role}'
             raise ProtocolViolation(i, role,
                                     f'非标准role，合法值: {VALID_ROLES}')
 
@@ -71,6 +72,7 @@ def validate(messages: list[dict]) -> list[dict]:
                 continue
             for prefix in _TOOL_SMELL_PREFIXES:
                 if stripped.startswith(prefix):
+                    _last_violation = f'user消息包含裸工具输出: {prefix}'
                     raise ProtocolViolation(
                         i, role,
                         f'user消息包含裸工具输出（前缀"{prefix}"），'
@@ -81,6 +83,7 @@ def validate(messages: list[dict]) -> list[dict]:
         if role == 'system':
             for smell in _CONVERSATION_SMELLS:
                 if smell in content:
+                    _last_violation = f'system消息包含对话标记: {smell}'
                     raise ProtocolViolation(
                         i, role,
                         f'system消息包含对话历史标记"{smell}"，'

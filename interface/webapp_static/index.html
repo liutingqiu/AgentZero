@@ -7,14 +7,31 @@
 <meta name="theme-color" content="#212121">
 <title>零</title>
 <link rel="stylesheet" href="/static/style.css">
+    <!-- DOMPurify for safe markdown rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <!-- Theme detection script -->
+    <script>
+      (function(){
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const stored = localStorage.getItem('zero-theme');
+        const theme = stored || (prefersDark ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-theme', theme);
+        window.toggleTheme = function(){
+          const cur = document.documentElement.getAttribute('data-theme');
+          const next = cur === 'dark' ? 'light' : 'dark';
+          document.documentElement.setAttribute('data-theme', next);
+          localStorage.setItem('zero-theme', next);
+        };
+      })();
+    </script>
 </head>
 <body>
 
 <div class="login-overlay" id="login">
   <div class="login-logo">零</div>
   <div class="login-title">请输入暗号解锁</div>
-  <input id="code" class="login-input" type="text" placeholder="暗号" autocomplete="off" autofocus>
-  <button class="login-btn" onclick="unlock()">解锁</button>
+  <input id="code" class="login-input" type="text" placeholder="暗号" autocomplete="off" autofocus aria-label="暗号输入">
+  <button class="login-btn" onclick="unlock()" aria-label="解锁">解锁</button>
   <div class="login-err" id="err"></div>
 </div>
 
@@ -26,13 +43,13 @@
         <span class="sidebar-logo">零</span>
         <span class="sidebar-version">v5</span>
       </div>
-      <button class="new-chat-btn" onclick="newChat()" title="新对话">
+      <button class="new-chat-btn" onclick="newChat()" title="新对话" aria-label="新建对话">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
         <span>新对话</span>
       </button>
     </div>
 
-    <div class="conversations" id="convList">
+    <div class="conversations" id="convList" role="list">
       <div class="conv-section-title" id="convTitle" style="display:none;">最近对话</div>
     </div>
 
@@ -87,7 +104,7 @@
   <!-- 主聊天区 -->
   <div class="main">
     <div class="topbar">
-      <button class="menu-btn" onclick="toggleSidebar()" title="菜单">
+      <button class="menu-btn" onclick="toggleSidebar()" title="菜单" aria-label="打开菜单">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
       </button>
       <div class="topbar-title" id="chatTitle">零</div>
@@ -95,13 +112,13 @@
       <div class="topbar-status" id="topbarStatus"></div>
     </div>
 
-    <div class="messages" id="msgs"></div>
+    <div class="messages" id="msgs" role="log" aria-live="polite" aria-label="聊天消息"></div>
 
     <!-- 输入区 -->
     <div class="input-area">
       <div class="input-wrapper">
         <div class="input-actions">
-          <button class="attach-btn" onclick="attachFile()" title="添加文件">
+          <button class="attach-btn" onclick="attachFile()" title="添加文件" aria-label="添加文件">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
           </button>
           <input type="file" id="fileInput" style="display:none" onchange="handleFileSelect(event)">
@@ -111,8 +128,8 @@
           </div>
         </div>
         <div class="input-box">
-          <textarea id="inp" rows="1" placeholder="给零发消息..." onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
-          <button class="send-btn" id="sendBtn" onclick="send()" title="发送">
+          <textarea id="inp" rows="1" placeholder="给零发消息..." onkeydown="handleKey(event)" oninput="autoResize(this)" aria-label="消息输入"></textarea>
+          <button class="send-btn" id="sendBtn" onclick="send()" title="发送" aria-label="发送消息">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
           </button>
         </div>
@@ -123,10 +140,10 @@
 </div>
 
 <!-- 图片灯箱 -->
-<div class="lightbox-overlay" id="lightbox" onclick="closeLightbox(event)" onkeydown="if(event.key==='Escape')closeLightbox()">
+<div class="lightbox-overlay" id="lightbox" onclick="closeLightbox(event)" onkeydown="if(event.key==='Escape')closeLightbox()" role="dialog" aria-modal="true" aria-label="图片预览">
   <div class="lightbox-content">
-    <button class="lightbox-close" onclick="closeLightbox()" title="关闭">✕</button>
-    <button class="lightbox-download" id="lightboxDownload" title="保存到本地">保存</button>
+    <button class="lightbox-close" onclick="closeLightbox()" title="关闭" aria-label="关闭预览">✕</button>
+    <button class="lightbox-download" id="lightboxDownload" title="保存到本地" aria-label="保存图片">保存</button>
     <img id="lightboxImg" src="" alt="原图">
   </div>
 </div>

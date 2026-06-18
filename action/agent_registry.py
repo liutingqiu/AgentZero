@@ -224,7 +224,7 @@ class AgentRegistry:
                     + a['cost'] * 50)
             # 免费作为破平器
             if prefer_free and a['cost'] == 0:
-                base -= 50
+                base -= 200
             return base
 
         best = min(candidates, key=score)

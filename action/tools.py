@@ -20,11 +20,12 @@ import shutil
 import subprocess
 import sys as _sys
 import urllib.request
+import uuid
 
 from config import get_agnes_key, get_logger, MODEL_NAMES
 from config import AGNES_API_URL as _AGNES_API
 from config import AGNES_IMAGE_URL as _AGNES_IMAGE_URL
-from utils.result import Result, ErrorCode, ok, err
+from utils.result import Result, ErrorCode, ErrorInfo, ok, err
 
 logger = get_logger('zero.tools')
 
@@ -42,7 +43,127 @@ def register(name, description=''):
     return decorator
 
 
+# ── 权限等级全局状态 ───────────────────────────────────────────
+PERMISSION_LEVEL = 'plan'  # 默认 plan 模式，由外部通过 set_permission_level() 设置
+
+
+def set_permission_level(level: str):
+    """设置当前权限等级。由 llm.py / server.py 在调用工具前设置。"""
+    global PERMISSION_LEVEL
+    if level in ('plan', 'auto', 'yolo'):
+        PERMISSION_LEVEL = level
+        logger.info('权限等级切换为: %s', level)
+
+
+def _check_file_read(path: str) -> bool:
+    """plan 模式下只允许读取项目目录和 data/ 目录下的文件。"""
+    if PERMISSION_LEVEL == 'yolo':
+        return True
+    if PERMISSION_LEVEL == 'plan':
+        allowed_dirs = [os.path.abspath('.'), os.path.abspath('data')]
+        try:
+            abs_path = os.path.abspath(path)
+        except (OSError, ValueError):
+            return False
+        for d in allowed_dirs:
+            if abs_path.startswith(d + os.sep) or abs_path == d:
+                return True
+        return False
+    return True  # auto 模式允许读取
+
+
+def _check_file_write(path: str) -> bool:
+    """写入权限：plan 禁止，auto/yolo 允许。"""
+    if PERMISSION_LEVEL == 'plan':
+        return False
+    return True
+
+
+def _check_command(cmd: str) -> tuple:
+    """命令执行权限：plan 禁止，auto 需审批，yolo 允许。
+    
+    Returns:
+        (allowed: bool, action: str|None) — allowed=False 时 action 为 'denied' 或 'approval_required'
+    """
+    if PERMISSION_LEVEL == 'plan':
+        return False, 'denied'
+    if PERMISSION_LEVEL == 'auto':
+        return False, 'approval_required'  # 需要用户审批
+    return True, None  # yolo 允许
+
+
+# ── 待审批命令存储 ────────────────────────────────────────────
+_PENDING_APPROVALS: dict[str, dict] = {}  # request_id → {command, ...}
+
+
+def approve_command(request_id: str, approved: bool) -> Result:
+    """处理用户审批结果。由 /api/approval 端点调用。
+    
+    Args:
+        request_id: tool_shell 生成的 UUID
+        approved: 用户是否允许执行
+    
+    Returns:
+        Result — 若批准则包含命令执行结果，拒绝则返回取消信息
+    """
+    entry = _PENDING_APPROVALS.pop(request_id, None)
+    if entry is None:
+        return err(ErrorCode.INVALID_INPUT, f'审批请求不存在或已过期: {request_id}')
+
+    if not approved:
+        logger.info('用户拒绝命令执行: %s', entry['command'][:80])
+        return ok({'status': 'cancelled', 'message': '用户拒绝执行命令'})
+
+    cmd = entry['command']
+    logger.info('用户批准命令执行: %s', cmd[:80])
+
+    # 以 yolo 权限执行命令（跳过权限门控）
+    global PERMISSION_LEVEL
+    old_level = PERMISSION_LEVEL
+    try:
+        PERMISSION_LEVEL = 'yolo'
+        return _execute_shell(cmd)
+    finally:
+        PERMISSION_LEVEL = old_level
+
+
+def _execute_shell(cmd: str) -> Result:
+    """实际执行 shell 命令（含白名单校验）。"""
+    stripped = cmd.lstrip().lower()
+    first_token = stripped.split()[0] if stripped.split() else ''
+    clean_token = first_token.strip('"\'')
+
+    if not any(clean_token.startswith(p) for p in _ALLOWED_CMD_PREFIXES):
+        logger.warning('shell rejected (not in whitelist): %s', cmd[:80])
+        return err(
+            ErrorCode.SHELL_REJECTED,
+            f'命令不在白名单: {clean_token}。白名单: {", ".join(_ALLOWED_CMD_PREFIXES)}',
+        )
+
+    try:
+        import shlex
+        argv = shlex.split(cmd, posix=False) if not isinstance(cmd, list) else cmd
+        result = subprocess.run(
+            argv, shell=False, capture_output=True, text=True,
+            timeout=60, cwd=BASE,
+            encoding='utf-8', errors='replace',
+        )
+        return ok({
+            'stdout': (result.stdout or result.stderr)[:3000],
+            'exit_code': result.returncode,
+            'success': result.returncode == 0,
+        })
+    except subprocess.TimeoutExpired:
+        return err(ErrorCode.TIMEOUT, '命令超时(60s)')
+    except FileNotFoundError as exc:
+        return err(ErrorCode.INTERNAL, f'未找到命令: {exc}')
+    except Exception as exc:
+        logger.warning('shell failed: %s', exc)
+        return err(ErrorCode.INTERNAL, str(exc))
+
+
 # ── 全局安全策略 ───────────────────────────────────────────────
+# 注意: pip/npm/npx 可安装任意包，仅在 auto(审批)/yolo 模式下可用
 _ALLOWED_CMD_PREFIXES = (
     'git', 'python', 'pip', 'node', 'npm', 'npx',
     'dir', 'ls', 'cd', 'echo', 'type', 'cat',
@@ -64,6 +185,8 @@ def _resolve_path(args):
 @register('read_file', '读取文件内容')
 def tool_read_file(args):
     path = _resolve_path(args)
+    if not _check_file_read(path):
+        return err(ErrorCode.PERMISSION_DENIED, f'plan 模式下不允许读取该文件: {path}')
     if not path or not os.path.exists(path):
         return err(ErrorCode.FILE_NOT_FOUND, f'文件不存在: {path}')
     try:
@@ -83,6 +206,8 @@ def tool_read_file(args):
 @register('write_file', '写入文件')
 def tool_write_file(args):
     path = args.get('path', '')
+    if not _check_file_write(path):
+        return err(ErrorCode.PERMISSION_DENIED, 'plan 模式下不允许写入文件')
     content = args.get('content', '')
     try:
         directory = os.path.dirname(path) or '.'
@@ -240,37 +365,21 @@ def tool_shell(args):
     if not cmd:
         return err(ErrorCode.INVALID_INPUT, '缺少 command')
 
-    stripped = cmd.lstrip().lower()
-    first_token = stripped.split()[0] if stripped.split() else ''
-    clean_token = first_token.strip('"\'')
+    # 权限门控
+    allowed, action = _check_command(cmd)
+    if not allowed:
+        if action == 'approval_required':
+            request_id = str(uuid.uuid4())
+            _PENDING_APPROVALS[request_id] = {'command': cmd}
+            return Result(ok=False, data={
+                'status': 'approval_required',
+                'command': cmd,
+                'request_id': request_id,
+            }, error=ErrorInfo(code=ErrorCode.PERMISSION_DENIED,
+                               message='auto 模式需用户审批命令执行'))
+        return err(ErrorCode.PERMISSION_DENIED, 'plan 模式下不允许执行命令')
 
-    if not any(clean_token.startswith(p) for p in _ALLOWED_CMD_PREFIXES):
-        logger.warning('shell rejected (not in whitelist): %s', cmd[:80])
-        return err(
-            ErrorCode.SHELL_REJECTED,
-            f'命令不在白名单: {clean_token}。白名单: {", ".join(_ALLOWED_CMD_PREFIXES)}',
-        )
-
-    try:
-        import shlex
-        argv = shlex.split(cmd, posix=False) if not isinstance(cmd, list) else cmd
-        result = subprocess.run(
-            argv, shell=False, capture_output=True, text=True,
-            timeout=60, cwd=BASE,
-            encoding='utf-8', errors='replace',
-        )
-        return ok({
-            'stdout': (result.stdout or result.stderr)[:3000],
-            'exit_code': result.returncode,
-            'success': result.returncode == 0,
-        })
-    except subprocess.TimeoutExpired:
-        return err(ErrorCode.TIMEOUT, '命令超时(60s)')
-    except FileNotFoundError as exc:
-        return err(ErrorCode.INTERNAL, f'未找到命令: {exc}')
-    except Exception as exc:
-        logger.warning('shell failed: %s', exc)
-        return err(ErrorCode.INTERNAL, str(exc))
+    return _execute_shell(cmd)
 
 
 # ═══════════════════════════════════════════

@@ -81,7 +81,7 @@ def get_api_url() -> str:
     url = os.environ.get('LLM_API_URL', '').strip()
     if url:
         return url
-    # 旧 secure_config 兼容（已废弃，v2 移除）
+    # 旧 secure_config 兼容（已废弃，计划 v3 移除；请迁移到 LLM_API_URL 环境变量）
     try:
         from secure_config import get_api_url as _fallback  # noqa: WPS433
         return _fallback()
@@ -93,7 +93,7 @@ def get_api_key() -> str:
     key = os.environ.get('LLM_API_KEY', '').strip()
     if key:
         return key
-    # 旧 secure_config 兼容（已废弃，v2 移除）
+    # 旧 secure_config 兼容（已废弃，计划 v3 移除；请迁移到 LLM_API_KEY 环境变量）
     try:
         from secure_config import get_api_key as _fallback  # noqa: WPS433
         return _fallback()

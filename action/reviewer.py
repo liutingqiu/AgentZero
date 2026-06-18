@@ -47,7 +47,7 @@ class Reviewer:
             rule = self._rule_review(task, agent_info)
             llm = self._llm_review(task, agent_info)
             return {
-                'passed': rule['passed'] or llm.get('passed', False),
+                'passed': rule['passed'] and llm.get('passed', True),
                 'reason': llm.get('reason', rule['reason']),
                 'score': int(rule['score'] * 0.6 + llm.get('score', rule['score']) * 0.4),
             }

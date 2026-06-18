@@ -33,7 +33,7 @@ from cognition.token_tracker import tracker as token_tracker
 from action.agent_loop import AgentLoop
 from action.agent_registry import AgentRegistry, seed_defaults
 from action.reviewer import Reviewer
-from action.tools import execute as tool_execute
+from action.tools import execute as tool_execute, set_permission_level
 
 from model_adapter import load_adapters
 from model_adapter.base import ModelAdapter
@@ -64,7 +64,7 @@ def _pick_candidates(task_type='text', prefer_free=True):
     budget = stats.get('budget', 0)
     spent = stats.get('total_cost', 0)
     remaining = budget - spent
-    threshold = token_tracker._degrade_threshold  # 从配置读取的降级阈值
+    threshold = getattr(token_tracker, '_degrade_threshold', 0.05)  # 降级阈值（美元）
 
     if budget > 0 and remaining <= 0:
         # 预算已耗尽，彻底走免费
@@ -113,7 +113,12 @@ def _check_budget(prefer_free: bool) -> bool:
 
 def call_llm(system=None, prompt=None, *, messages=None,
              prefer_free=True, task_type='text', timeout=30,
-             task_text='', extra_rules='', agent_id='', skip_ground=False):
+             task_text='', extra_rules='', agent_id='', skip_ground=False,
+             _depth=0):
+    # 递归深度保护
+    if _depth > 3:
+        return '[递归深度超限，预算检查异常，请检查配置]'
+
     # 预算检查
     if not _check_budget(prefer_free):
         # 预算耗尽，尝试强制免费模型
@@ -122,7 +127,8 @@ def call_llm(system=None, prompt=None, *, messages=None,
             return call_llm(system=system, prompt=prompt, messages=messages,
                            prefer_free=True, task_type=task_type, timeout=timeout,
                            task_text=task_text, extra_rules=extra_rules,
-                           agent_id=agent_id, skip_ground=skip_ground)
+                           agent_id=agent_id, skip_ground=skip_ground,
+                           _depth=_depth + 1)
         return '[预算已耗尽，请等待下个周期或配置更多预算]'
     
     if messages is not None:
@@ -271,6 +277,10 @@ def _parse_at_mentions(text: str) -> list:
     return [(m.group(1).lower(),m.group(2).strip()) for m in _re3.finditer(pattern,text)]
 
 def _auto_write_files(reply: str) -> int:
+    # plan 模式下不自动写文件（权限门控）
+    from action.tools import PERMISSION_LEVEL
+    if PERMISSION_LEVEL == 'plan':
+        return 0
     import re as _re4
     code_start = reply.find('```html')
     if code_start == -1: code_start = reply.find('```')
@@ -288,13 +298,36 @@ def _auto_write_files(reply: str) -> int:
     if wr.ok: logger.info('auto-wrote: %s (%d chars)',filepath,len(content)); return 1
     return 0
 
-def handle_message(text):
+def handle_message(text, permission_level='plan'):
+    # 设置权限等级（供 tools.py 工具函数门控使用）
+    set_permission_level(permission_level)
+
     is_attack, reason = detect_jailbreak(text)
     if is_attack: return f'🛡️ 检测到{reason}，已拒绝。','zero'
 
     # ── 特殊指令：换图标 ──
     if text.strip() in ('换图标', '更换图标', '上传图标', '改图标', 'set icon'):
         return ('要更换托盘图标？请上传一张 PNG/JPG 图片到 /api/icon（POST multipart form，字段名 file）。上传后重启零即可生效。', 'zero')
+
+    # Bug 2: 检测图片/文件上传引用，确保 LLM 能看到
+    import re as _upload_re
+    _upload_images = _upload_re.findall(r'!\[.*?\]\(/api/download/([^)]+)\)', text)
+    _upload_files = _upload_re.findall(r'\[用户上传了[^\]]*?：([^\]]+)\]', text)
+    if _upload_images or _upload_files:
+        _upload_note = '\n\n[系统提示：'
+        if _upload_images:
+            _upload_note += '用户上传了图片：' + '、'.join(_upload_images)
+            _upload_note += '。你无法直接查看图片内容，但可以根据文件名和用户描述来回应。'
+        if _upload_files:
+            if _upload_images:
+                _upload_note += ' 同时上传了文件：' + '、'.join(_upload_files) + '。'
+            else:
+                _upload_note += '用户上传了文件：' + '、'.join(_upload_files) + '。'
+        _upload_note += ']'
+        # 只在没有系统提示时才追加，避免重复
+        if '[系统提示：' not in text:
+            text = text + _upload_note
+        logger.debug('检测到上传引用: images=%s files=%s', _upload_images, _upload_files)
 
     wm.add_message('user',text)
     import re as _re2

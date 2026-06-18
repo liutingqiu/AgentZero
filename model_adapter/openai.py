@@ -59,6 +59,7 @@ class OpenAIAdapter(ModelAdapter):
                 'model': kwargs.get('model', self._model),
                 'messages': messages,
                 'max_tokens': kwargs.get('max_tokens', 2000),
+                'temperature': kwargs.get('temperature', 0.7),
             }).encode('utf-8')
 
             req = urllib.request.Request(

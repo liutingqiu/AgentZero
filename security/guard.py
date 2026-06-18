@@ -193,6 +193,7 @@ class SessionManager:
         if elapsed > self.UNLOCK_DURATION:
             self.lock()
             return False
+        # 过期前 5 分钟自动续期（设计意图：活跃使用中不过期打断）
         if elapsed > self.UNLOCK_DURATION - 300:
             self.state['unlocked_at'] = time.time()
             self._save()

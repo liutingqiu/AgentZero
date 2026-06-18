@@ -85,9 +85,12 @@ def daily_review(memory_manager):
 
 def _period_stats(memory_manager, start_hour, end_hour):
     """统计特定时段的性能"""
-    stats = memory_manager.summary()
-    total = stats.get('total', 0)
-    success = stats.get('success', 0)
+    # 使用 get_recent_tasks 按小时范围过滤
+    recent = memory_manager.get_recent_tasks(limit=100)
+    filtered = [t for t in (recent or [])
+                if t.get('hour', 0) in range(start_hour, end_hour)]
+    total = len(filtered)
+    success = sum(1 for t in filtered if t.get('outcome') == 'success')
     return {
         'total': total,
         'rate': round(success / total * 100, 1) if total > 0 else 0,

@@ -80,7 +80,6 @@ class FileWatcher:
         """递归扫描一个目录，填充 {path: mtime} dict。"""
         try:
             entries = list(os.scandir(path))
-        except PermissionError:
             return
         except PermissionError:
             return  # 无权限访问子目录 — 正常跳过

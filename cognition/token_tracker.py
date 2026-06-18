@@ -76,6 +76,45 @@ class TokenTracker:
             self._records.append(rec)
         return rec
 
+    def get_monitor_metrics(self) -> dict:
+        """获取聚合监控指标（最近 1 小时窗口）。
+
+        从 _records 中计算：调用次数、平均延迟、错误率、
+        缓存命中率、token 消耗、费用。适配 TokenRecord 的
+        实际字段。
+        """
+        now = time.time()
+        hour_ago = now - 3600
+
+        with self._lock:
+            recent = [r for r in self._records if r.timestamp > hour_ago]
+
+        total_calls = len(recent)
+        if total_calls == 0:
+            return {
+                'total_calls': 0,
+                'avg_latency_ms': 0,
+                'error_rate': 0,
+                'cache_hit_rate': 0,
+                'total_tokens': 0,
+                'total_cost': 0,
+                'period_hours': 1,
+            }
+
+        cached_count = sum(1 for r in recent if r.cached)
+        total_tokens = sum(r.total_tokens for r in recent)
+        total_cost = sum(r.cost for r in recent)
+
+        return {
+            'total_calls': total_calls,
+            'avg_latency_ms': 0,          # TokenRecord 无 latency 字段
+            'error_rate': 0,               # TokenRecord 无 is_error 字段
+            'cache_hit_rate': round(cached_count / total_calls, 4),
+            'total_tokens': total_tokens,
+            'total_cost': round(total_cost, 6),
+            'period_hours': 1,
+        }
+
     def session_stats(self) -> dict:
         """当前会话的汇总统计。"""
         with self._lock:
@@ -127,6 +166,11 @@ class TokenTracker:
         """检查缓存命中。"""
         entry = self._cache.get(prompt_hash)
         if entry:
+            # 检查 TTL 是否过期
+            if entry[1] < time.time():
+                del self._cache[prompt_hash]
+                self._cache_misses += 1
+                return None
             self._cache_hits += 1
             return entry[0]
         self._cache_misses += 1

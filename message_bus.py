@@ -102,9 +102,9 @@ class MessageBus:
     def _worker(self):
         while True:
             item = self._queue.get()  # block forever until new event
-            if item is None:          # 哨兵：停止信号（当前未使用）
+            if item is None:          # 哨兵：停止信号
                 self._queue.task_done()
-                continue
+                break
             try:
                 self._dispatch(item)
             except Exception as exc:  # noqa: BLE001
@@ -272,6 +272,11 @@ class MessageBus:
 
     def stop(self):
         self._healthy = False
+        # 发送哨兵信号让工作线程退出
+        for _ in self._threads:
+            self._queue.put(None)
+        for t in self._threads:
+            t.join(timeout=3)
         return True
 
     def status(self):

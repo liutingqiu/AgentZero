@@ -109,18 +109,25 @@ def _migrate():
             except sqlite3.Error:
                 fts_cols = set()
             if 'outcome' not in fts_cols:
-                conn.execute('DROP TABLE IF EXISTS task_fts')
-                conn.execute('''
-                    CREATE VIRTUAL TABLE task_fts USING fts5(
-                        task_id, input_summary, outcome,
-                        content='task_memory', content_rowid='id'
-                    )
-                ''')
-                # 重建数据
-                conn.execute('''
-                    INSERT INTO task_fts(rowid, task_id, input_summary, outcome)
-                    SELECT id, task_id, input_summary, outcome FROM task_memory
-                ''')
+                # FTS5 不支持 ALTER，需重建；用事务保证原子性
+                conn.execute('BEGIN')
+                try:
+                    conn.execute('DROP TABLE IF EXISTS task_fts')
+                    conn.execute('''
+                        CREATE VIRTUAL TABLE task_fts USING fts5(
+                            task_id, input_summary, outcome,
+                            content='task_memory', content_rowid='id'
+                        )
+                    ''')
+                    # 从主表重建数据
+                    conn.execute('''
+                        INSERT INTO task_fts(rowid, task_id, input_summary, outcome)
+                        SELECT id, task_id, input_summary, outcome FROM task_memory
+                    ''')
+                    conn.execute('COMMIT')
+                except Exception:
+                    conn.execute('ROLLBACK')
+                    raise
                 logger.info('migrated: rebuilt task_fts with outcome column')
     except sqlite3.Error as exc:
         logger.warning('migration warning: %s', exc)
@@ -455,3 +462,68 @@ def search_memory(keyword, limit=3):
     except sqlite3.Error as exc:
         logger.warning('search_memory failed: %s', exc)
         return []
+
+
+# ── 持久化记忆 CRUD（给 API 用） ─────────────────────────────────
+def list_memories(limit=20):
+    """列出持久化记忆（含 id 和内容概要）。"""
+    try:
+        with _connect() as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS persistent_memory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    topic TEXT UNIQUE,
+                    content TEXT,
+                    tags TEXT,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            rows = conn.execute(
+                'SELECT id, topic, content, tags, updated_at FROM persistent_memory ORDER BY updated_at DESC LIMIT ?',
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except sqlite3.Error as exc:
+        logger.warning('list_memories failed: %s', exc)
+        return []
+
+
+def search_memories(query, limit=20):
+    """搜索持久化记忆（topic 或 content LIKE）。"""
+    if not query or not query.strip():
+        return list_memories(limit)
+    term = query.strip()
+    try:
+        with _connect() as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS persistent_memory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    topic TEXT UNIQUE,
+                    content TEXT,
+                    tags TEXT,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            rows = conn.execute(
+                '''SELECT id, topic, content, tags, updated_at FROM persistent_memory
+                   WHERE topic LIKE ? OR content LIKE ?
+                   ORDER BY updated_at DESC LIMIT ?''',
+                (f'%{term}%', f'%{term}%', limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except sqlite3.Error as exc:
+        logger.warning('search_memories failed: %s', exc)
+        return []
+
+
+def delete_memory(mem_id):
+    """删除一条持久化记忆。返回是否成功删除。"""
+    try:
+        with _connect() as conn:
+            cursor = conn.execute(
+                'DELETE FROM persistent_memory WHERE id = ?', (mem_id,),
+            )
+            return cursor.rowcount > 0
+    except sqlite3.Error as exc:
+        logger.warning('delete_memory failed: %s', exc)
+        return False

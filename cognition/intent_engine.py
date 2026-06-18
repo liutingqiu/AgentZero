@@ -27,7 +27,7 @@ def _cache_key(text, context=''):
     """生成缓存键（文本+上下文的哈希）
     v2: 扩展到100字符（GPT-4o: 50字符太短，高相似度输入会冲突）
     """
-    return hashlib.md5(f'{text[:100]}:{context[:100]}'.encode()).hexdigest()
+    return hashlib.sha256(f'{text[:100]}:{context[:100]}'.encode()).hexdigest()
 
 
 def _check_cache(text, context=''):

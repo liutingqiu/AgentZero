@@ -30,7 +30,21 @@ _init_adapters()
 
 
 def _pick_candidates(task_type='text', prefer_free=True):
-    """从已发现的适配器中选候选链（与 llm.py 共享逻辑）。"""
+    """从已发现的适配器中选候选链（含预算自动降级，与 llm.py 对齐）。"""
+    # 预算自动降级
+    try:
+        stats = token_tracker.session_stats()
+        budget = stats.get('budget', 0)
+        spent = stats.get('total_cost', 0)
+        remaining = budget - spent
+        threshold = getattr(token_tracker, '_degrade_threshold', 0.05)
+        if budget > 0 and remaining <= 0:
+            prefer_free = True
+        elif budget > 0 and remaining < threshold:
+            prefer_free = True
+    except Exception:
+        pass
+
     candidates = []
     for a in _ADAPTERS:
         if prefer_free and not a.meta.is_free:

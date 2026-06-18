@@ -125,6 +125,14 @@ web_search, web_fetch, sysmon, agent_status
             
             action = decision.get('action', '')
             
+            # ── 兜底：action 为空时当作 done ──
+            if not action:
+                return {
+                    'status': 'done',
+                    'reply': decision.get('reply', llm_reply) or '(无操作)',
+                    'steps': steps, 'loops': turn + 1
+                }
+
             # ── Decide: done? ──
             if action == 'done':
                 reply = decision.get('reply', llm_reply)

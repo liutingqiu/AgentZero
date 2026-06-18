@@ -213,6 +213,7 @@ class SingleAgentOrchestrator:
 
         plan = extract_first_json(str(reply)) if reply else None
         if not isinstance(plan, dict):
+            logger.warning('Planner JSON 提取失败，原始回复: %s..', str(reply)[:120] if reply else '(空)')
             return []
 
         raw_steps = plan.get('steps', [])
@@ -388,13 +389,14 @@ class SingleAgentOrchestrator:
                 for s in steps
             )
             done_str = f'{len(done)}/{len(steps)}'
+            user_prompt = SYNTHESIZER_PROMPT.format(
+                goal=goal,
+                summary=f'{done_str} 步骤成功完成',
+                steps_detail=steps_detail,
+            )
             reply = self.llm(messages=[
-                {'role': 'system', 'content': SYNTHESIZER_PROMPT},
-                {'role': 'user', 'content': SYNTHESIZER_PROMPT.format(
-                    goal=goal,
-                    summary=f'{done_str} 步骤成功完成',
-                    steps_detail=steps_detail,
-                )},
+                {'role': 'system', 'content': '你是结果整合者（Synthesizer）。将各步骤的结论摘要整合为一份完整的最终答案。'},
+                {'role': 'user', 'content': user_prompt},
             ], task_text=f'整合: {goal}', task_type='reasoning',
                                agent_id='synthesizer')
             return str(reply) if reply else '(整合失败)'

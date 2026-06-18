@@ -1,0 +1,192 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]: 零
+        - generic [ref=e7]: v5
+      - button "新建对话" [ref=e8] [cursor=pointer]:
+        - img [ref=e9]
+        - generic [ref=e10]: 新对话
+    - list [ref=e11]:
+      - generic [ref=e12]: 暂无对话
+    - generic [ref=e13]: Agents
+    - generic [ref=e14]:
+      - generic [ref=e17] [cursor=pointer]: 零 · 智能路由
+      - generic [ref=e20] [cursor=pointer]: Agnes 2.0
+      - generic [ref=e23] [cursor=pointer]: Reasonix · 代码
+      - generic [ref=e26] [cursor=pointer]: Tavily · 搜索
+    - generic [ref=e27]:
+      - generic [ref=e28]: 🧾
+      - generic [ref=e29]: "0"
+      - generic [ref=e30]: tokens
+      - generic [ref=e31]: "|"
+      - generic [ref=e32]: $
+      - generic [ref=e33]: "0.000000"
+      - generic [ref=e34]: "|"
+      - generic [ref=e35]: 缓存
+      - generic [ref=e36]: 0%
+  - generic [ref=e37]:
+    - generic [ref=e38]:
+      - generic [ref=e39]: 零
+      - generic [ref=e40]:
+        - button "切换右侧面板" [ref=e41] [cursor=pointer]:
+          - img [ref=e42]
+        - button [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+    - log "聊天消息" [ref=e48]:
+      - generic [ref=e49]:
+        - generic [ref=e50]: 零
+        - generic [ref=e51]: 有什么可以帮你的？
+        - generic [ref=e52]:
+          - button "👋 打招呼 让零介绍自己" [ref=e53] [cursor=pointer]:
+            - generic [ref=e54]: 👋 打招呼
+            - generic [ref=e55]: 让零介绍自己
+          - button "💻 写代码 Python 快速排序" [ref=e56] [cursor=pointer]:
+            - generic [ref=e57]: 💻 写代码
+            - generic [ref=e58]: Python 快速排序
+          - button "🔍 分析问题 技术分析" [ref=e59] [cursor=pointer]:
+            - generic [ref=e60]: 🔍 分析问题
+            - generic [ref=e61]: 技术分析
+          - button "✨ 创意写作 编程故事" [ref=e62] [cursor=pointer]:
+            - generic [ref=e63]: ✨ 创意写作
+            - generic [ref=e64]: 编程故事
+    - generic [ref=e66]:
+      - button "添加文件" [ref=e68] [cursor=pointer]:
+        - img [ref=e69]
+      - generic [ref=e71]:
+        - textbox "消息输入" [ref=e72]:
+          - /placeholder: 给零发消息...
+        - button "发送消息" [ref=e73] [cursor=pointer]:
+          - img [ref=e74]
+      - generic [ref=e76]: 零可能会出错。请核对重要信息。
+  - generic [ref=e77]:
+    - generic [ref=e78]:
+      - generic [ref=e79]: Agent 状态
+      - generic [ref=e82]: 零 · 路由
+      - generic [ref=e85]: Agnes 2.0
+      - generic [ref=e88]: Reasonix
+      - generic [ref=e91]: Tavily
+    - generic [ref=e92]:
+      - generic [ref=e93]: Token 仪表
+      - generic [ref=e94]:
+        - generic [ref=e95]: tokens
+        - generic [ref=e96]: "0"
+      - generic [ref=e97]:
+        - generic [ref=e98]: cost
+        - generic [ref=e99]: $0.00
+      - generic [ref=e100]:
+        - generic [ref=e101]: cache
+        - generic [ref=e102]: 0%
+    - generic [ref=e103]:
+      - generic [ref=e104]: 步骤时间轴
+      - generic [ref=e105]:
+        - textbox "新任务标题..." [ref=e106]
+        - button "添加" [ref=e107] [cursor=pointer]
+      - generic [ref=e108]:
+        - button "✓" [ref=e109] [cursor=pointer]
+        - generic [ref=e110]: 写入一个显示Hello Zero的HTML文件到E:/project/tools/zero/test_write.htm
+        - button "✕" [ref=e111] [cursor=pointer]
+      - generic [ref=e112]:
+        - button "✓" [ref=e113] [cursor=pointer]
+        - generic [ref=e114]: 先检查目录E:/project/tools/zero/是否存在，如果不存在则创建
+        - button "✕" [ref=e115] [cursor=pointer]
+      - generic [ref=e116]:
+        - button "✓" [ref=e117] [cursor=pointer]
+        - generic [ref=e118]: 将HTML内容写入 E:/project/tools/zero/hello2.html
+        - button "✕" [ref=e119] [cursor=pointer]
+      - generic [ref=e120]:
+        - button "✓" [ref=e121] [cursor=pointer]
+        - generic [ref=e122]: 生成一个简单的 Hello World HTML 文件内容
+        - button "✕" [ref=e123] [cursor=pointer]
+      - generic [ref=e124]:
+        - button "✓" [ref=e125] [cursor=pointer]
+        - generic [ref=e126]: 写一个 hello world HTML 保存到 E:/project/tools/zero/hello.html
+        - button "✕" [ref=e127] [cursor=pointer]
+      - generic [ref=e128]:
+        - button "✓" [ref=e129] [cursor=pointer]
+        - generic [ref=e130]: 确认文件保存成功并验证文件存在性
+        - button "✕" [ref=e131] [cursor=pointer]
+      - generic [ref=e132]:
+        - button "✓" [ref=e133] [cursor=pointer]
+        - generic [ref=e134]: 将生成的代码内容写入指定路径的文件中
+        - button "✕" [ref=e135] [cursor=pointer]
+      - generic [ref=e136]:
+        - button "✓" [ref=e137] [cursor=pointer]
+        - generic [ref=e138]: 验证代码逻辑并检查视觉效果是否符合磨砂玻璃风格要求
+        - button "✕" [ref=e139] [cursor=pointer]
+      - generic [ref=e140]:
+        - button "✓" [ref=e141] [cursor=pointer]
+        - generic [ref=e142]: 编写包含HTML结构、CSS磨砂玻璃样式和JavaScript逻辑的代码
+        - button "✕" [ref=e143] [cursor=pointer]
+      - generic [ref=e144]:
+        - button "✓" [ref=e145] [cursor=pointer]
+        - generic [ref=e146]: 将最终生成的完整HTML文件保存到指定路径 E:/project/tools/zero/liuli-desktop-co
+        - button "✕" [ref=e147] [cursor=pointer]
+      - generic [ref=e148]:
+        - button "✓" [ref=e149] [cursor=pointer]
+        - generic [ref=e150]: 整合HTML、CSS和JS代码，确保所有功能模块协同工作并优化用户体验
+        - button "✕" [ref=e151] [cursor=pointer]
+      - generic [ref=e152]:
+        - button "✓" [ref=e153] [cursor=pointer]
+        - generic [ref=e154]: 编写JavaScript逻辑，实现时钟显示、本地天气数据获取（或模拟）、番茄钟倒计时功能以及待办清单的增删改查交互
+        - button "✕" [ref=e155] [cursor=pointer]
+      - generic [ref=e156]:
+        - button "✓" [ref=e157] [cursor=pointer]
+        - generic [ref=e158]: 设计透明磨砂玻璃风格的HTML/CSS结构，包含时钟、天气、番茄钟和待办清单的布局与视觉样式
+        - button "✕" [ref=e159] [cursor=pointer]
+      - generic [ref=e160]:
+        - button "✓" [ref=e161] [cursor=pointer]
+        - generic [ref=e162]: 创建一个透明磨砂玻璃风格的桌面小工具HTML文件，有时钟、天气、番茄钟、待办清单。保存到 E:/project/tool
+        - button "✕" [ref=e163] [cursor=pointer]
+      - generic [ref=e164]:
+        - button "✓" [ref=e165] [cursor=pointer]
+        - generic [ref=e166]: 将生成的代码保存至指定路径 E:/project/tools/zero/liuli-desktop-companion.
+        - button "✕" [ref=e167] [cursor=pointer]
+      - generic [ref=e168]:
+        - button "✓" [ref=e169] [cursor=pointer]
+        - generic [ref=e170]: 整合HTML、CSS和JS为一个完整的单文件代码
+        - button "✕" [ref=e171] [cursor=pointer]
+      - generic [ref=e172]:
+        - button "✓" [ref=e173] [cursor=pointer]
+        - generic [ref=e174]: 编写JavaScript逻辑以实现时钟实时显示、天气数据获取（模拟或API对接）、番茄钟计时功能及待办清单的增删改查交互
+        - button "✕" [ref=e175] [cursor=pointer]
+      - generic [ref=e176]:
+        - button "✓" [ref=e177] [cursor=pointer]
+        - generic [ref=e178]: 设计并生成包含时钟、天气、番茄钟和待办清单的HTML结构及CSS磨砂玻璃样式代码
+        - button "✕" [ref=e179] [cursor=pointer]
+      - generic [ref=e180]:
+        - button "✓" [ref=e181] [cursor=pointer]
+        - generic [ref=e182]: 在浏览器中打开该文件以验证功能是否正常运行
+        - button "✕" [ref=e183] [cursor=pointer]
+      - generic [ref=e184]:
+        - button "✓" [ref=e185] [cursor=pointer]
+        - generic [ref=e186]: 将生成的代码保存至指定路径 E:\project\tools\zero\liuli-desktop-companion.
+        - button "✕" [ref=e187] [cursor=pointer]
+    - generic [ref=e188]:
+      - textbox "搜索记忆..." [ref=e190]
+      - generic [ref=e191]:
+        - generic [ref=e192]: 项目进展
+        - generic [ref=e193]: 013 认知层记忆管理 API 后端3端点+前端面板已完成开发
+        - button "✕" [ref=e194] [cursor=pointer]
+    - generic [ref=e195]:
+      - generic [ref=e196]:
+        - generic [ref=e197]: code
+        - generic [ref=e200]: 95%
+      - generic [ref=e201]:
+        - generic [ref=e202]: planning
+        - generic [ref=e205]: 90%
+      - generic [ref=e206]:
+        - generic [ref=e207]: analysis
+        - generic [ref=e210]: 70%
+      - generic [ref=e211]:
+        - generic [ref=e212]: chat
+        - generic [ref=e215]: 40%
+      - generic [ref=e216]:
+        - generic [ref=e217]: reasoning
+        - generic [ref=e220]: 50%
+      - generic [ref=e221]:
+        - generic [ref=e222]: text
+        - generic [ref=e225]: 50%
+      - generic [ref=e226]:
+        - generic [ref=e227]: search
+        - generic [ref=e230]: 50%
