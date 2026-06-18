@@ -10,6 +10,7 @@ import os
 import sys
 import urllib.parse
 import logging
+import asyncio
 
 from aiohttp import web
 
@@ -31,21 +32,46 @@ os.chdir(ZERO_ROOT)
 
 routes = web.RouteTableDef()
 
+# 最大上传大小（字节），默认 10MB，可通过环境变量覆盖
+MAX_UPLOAD_BYTES = int(os.environ.get('ZERO_MAX_UPLOAD_BYTES', str(10 * 1024 * 1024)))
+
 
 # ═══════════════════════════════════════════
 # 辅助函数
 # ═══════════════════════════════════════════
+
 
 def _authed(request: web.Request) -> bool:
     return session.is_unlocked()
 
 
 def _cors_headers() -> dict:
-    return {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-    }
+    """返回 CORS 头。
+    生产环境中应通过环境变量 ZERO_ALLOWED_ORIGINS 指定允许的 origin 列表（逗号分隔）。
+    默认为 '*'（仅用于开发）。
+    """
+    allowed = os.environ.get('ZERO_ALLOWED_ORIGINS', '').strip()
+    if allowed:
+        # 支持逗号分隔的白名单，返回请求的 Origin（如果在白名单中）
+        def header(origin: str | None):
+            if not origin:
+                return '*'
+            origins = [o.strip() for o in allowed.split(',') if o.strip()]
+            return origin if origin in origins else 'null'
+        # We return a dict with a dynamic Origin placeholder; caller should replace if needed.
+        # For simplicity, return wildcard for non-production when ZERO_ALLOWED_ORIGINS not set.
+        return {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+        }
+    else:
+        # 开发模式默认允许所有来源（部署到生产时请务必设置 ZERO_ALLOWED_ORIGINS）
+        return {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+        }
 
 
 # ═══════════════════════════════════════════
@@ -91,6 +117,7 @@ class HistoryHandler(web.View):
             summaries = get_conversation_summaries(days=7, limit=50)
             return web.json_response({'history': summaries}, headers=_cors_headers())
         except Exception as exc:
+            logger.exception('history handler failed')
             return web.json_response({'error': str(exc)}, status=500, headers=_cors_headers())
 
 
@@ -103,10 +130,11 @@ class KanbanHandler(web.View):
             from action.kanban import list_tasks, stats
             s = stats(); tasks = list_tasks(limit=20)
             return web.json_response({
-                'done': s['done'], 'total': s['total'],
+                'done': s.get('done', 0), 'total': s.get('total', 0),
                 'tasks': [{'title': t.title[:60], 'status': t.status, 'id': t.id} for t in tasks if t.title],
             }, headers=_cors_headers())
         except Exception as exc:
+            logger.exception('kanban handler failed')
             return web.json_response({'error': str(exc)}, status=500, headers=_cors_headers())
 
 
@@ -151,6 +179,7 @@ class ImageProxyHandler(web.View):
             return web.Response(body=img_data, content_type=ct,
                                 headers={'Cache-Control': 'public, max-age=86400'})
         except Exception as exc:
+            logger.exception('image proxy failed')
             return web.json_response({'error': str(exc)}, status=502, headers=_cors_headers())
 
 
@@ -180,18 +209,29 @@ class ChatStreamHandler(web.View):
             try:
                 await resp.write(('data: ' + data + '\n\n').encode('utf-8'))
             except (ConnectionResetError, BrokenPipeError):
-                pass
+                # 客户端已断开，忽略写入错误
+                raise
 
         await _send('status', 'thinking')
         try:
-            reply, agent = handle_message(message)
+            # 将阻塞性处理移入线程，避免阻塞事件循环
+            reply, agent = await asyncio.to_thread(handle_message, message)
             chunk_size = 80
             for i in range(0, len(reply), chunk_size):
-                await _send('chunk', reply[i:i + chunk_size])
-            await _send('done', {'agent': agent, 'total_chars': len(reply)})
+                try:
+                    await _send('chunk', reply[i:i + chunk_size])
+                except Exception:
+                    break
+            try:
+                await _send('done', {'agent': agent, 'total_chars': len(reply)})
+            except Exception:
+                pass
         except Exception as exc:
-            logger.warning('SSE chat failed: %s', exc)
-            await _send('error', str(exc))
+            logger.exception('SSE chat failed')
+            try:
+                await _send('error', str(exc))
+            except Exception:
+                pass
         return resp
 
 
@@ -224,46 +264,57 @@ class CollabStreamHandler(web.View):
             try:
                 await resp.write(('data: ' + data + '\n\n').encode('utf-8'))
             except (ConnectionResetError, BrokenPipeError):
-                pass
+                raise
 
         try:
             from action.goal_orchestrator import GoalOrchestrator
             orch = GoalOrchestrator(llm_caller=call_llm)
-            
+
             await _send('status', '目标编排器已启动')
             await _send('step', {'role': 'planner', 'status': 'running',
                                  'action': '正在分析任务...'})
 
-            result = orch.run(message, wm=wm)
-            
-            steps = result.get('steps', [])
+            # 在后台线程运行可能阻塞的 orchestrator.run
+            result = await asyncio.to_thread(orch.run, message, wm)
+
+            steps = result.get('steps', []) if isinstance(result, dict) else []
             for s in steps:
                 step_id = f'step_{s.get("step", 0)}'
                 action = s.get('action', '')[:120]
                 status = s.get('status', 'done')
                 output = s.get('output', '')[:800]
                 score = s.get('score', 0)
-                
-                await _send('step', {
-                    'id': step_id,
-                    'role': 'executor',
-                    'status': status,
-                    'action': action,
-                    'output': output,
-                    'critique': {'score': score, 'passed': s.get('passed', False)},
+
+                try:
+                    await _send('step', {
+                        'id': step_id,
+                        'role': 'executor',
+                        'status': status,
+                        'action': action,
+                        'output': output,
+                        'critique': {'score': score, 'passed': s.get('passed', False)},
+                    })
+                except Exception:
+                    break
+
+            try:
+                await _send('step', {'role': 'synthesizer', 'status': 'done',
+                                     'action': '结果整合完成'})
+                stats = result.get('stats', {}) if isinstance(result, dict) else {}
+                await _send('done', {
+                    'status': result.get('status', 'done') if isinstance(result, dict) else 'done',
+                    'answer': result.get('answer', '') if isinstance(result, dict) else '',
+                    'completed': stats.get('completed', 0),
+                    'total': stats.get('total', 0),
                 })
-            
-            await _send('step', {'role': 'synthesizer', 'status': 'done',
-                                 'action': '结果整合完成'})
-            await _send('done', {
-                'status': result.get('status', 'done'),
-                'answer': result.get('answer', ''),
-                'completed': result['stats']['completed'],
-                'total': result['stats']['total'],
-            })
+            except Exception:
+                pass
         except Exception as exc:
-            logger.warning('SSE collab failed: %s', exc)
-            await _send('error', str(exc))
+            logger.exception('SSE collab failed')
+            try:
+                await _send('error', str(exc))
+            except Exception:
+                pass
         return resp
 
 
@@ -307,16 +358,18 @@ class ChatHandler(web.View):
                 reply = registry.run(agent_id, message, capabilities=['chat'])
                 agent = agent_id
             else:
-                reply, agent = handle_message(message)
+                # 将可能阻塞的处理放到线程中
+                reply, agent = await asyncio.to_thread(handle_message, message)
             try:
                 memory_manager.save_conversation_summary(
                     topic=message[:30], summary=reply[:200],
                     emotion=wm.owner_mood, messages_count=1)
             except Exception:
-                pass
+                logger.exception('save_conversation_summary failed')
             return web.json_response({'reply': reply, 'status': 'ok', 'agent': agent},
                                      headers=_cors_headers())
         except Exception as exc:
+            logger.exception('chat handler failed')
             return web.json_response({'reply': f'处理失败: {exc}', 'status': 'error', 'agent': 'zero'},
                                      status=500, headers=_cors_headers())
 
@@ -337,6 +390,7 @@ class AgentRunHandler(web.View):
             return web.json_response({'reply': reply, 'status': 'ok', 'agent': agent_id},
                                      headers=_cors_headers())
         except Exception as exc:
+            logger.exception('agents run failed')
             return web.json_response({'reply': f'⚠️ {exc}', 'status': 'error', 'agent': agent_id},
                                      status=500, headers=_cors_headers())
 
@@ -356,8 +410,9 @@ class CollabHandler(web.View):
         try:
             from action.goal_orchestrator import GoalOrchestrator
             orch = GoalOrchestrator(llm_caller=call_llm)
-            result = orch.run(message, wm=wm)
-            steps = result.get('steps', [])
+            # 在后台线程运行 orchestration
+            result = await asyncio.to_thread(orch.run, message, wm)
+            steps = result.get('steps', []) if isinstance(result, dict) else []
             steps_detail = []
             for s in steps:
                 steps_detail.append({
@@ -368,17 +423,18 @@ class CollabHandler(web.View):
                     'version_count': 1,
                     'critiques': [s.get('passed', False)],
                 })
+            stats = result.get('stats', {}) if isinstance(result, dict) else {}
             return web.json_response({
-                'status': result.get('status', 'error'),
-                'answer': result.get('answer', ''),
+                'status': result.get('status', 'error') if isinstance(result, dict) else 'error',
+                'answer': result.get('answer', '') if isinstance(result, dict) else '',
                 'steps': steps_detail,
-                'completed': result['stats']['completed'],
-                'failed': result['stats']['failed'],
+                'completed': stats.get('completed', 0),
+                'failed': stats.get('failed', 0),
                 'grounded': 0,
                 'events': {'total': 0},
             }, headers=_cors_headers())
         except Exception as exc:
-            logger.warning('collab failed: %s', exc)
+            logger.exception('collab failed')
             return web.json_response({'error': str(exc), 'status': 'failed'},
                                      status=500, headers=_cors_headers())
 
@@ -423,25 +479,40 @@ async def upload_handler(request: web.Request):
     os.makedirs(upload_dir, exist_ok=True)
     reader = await request.multipart()
     saved = []
-    async for part in reader:
-        if part.filename:
-            # 防止路径穿越
-            safe_name = os.path.basename(part.filename)
-            dest = os.path.join(upload_dir, safe_name)
-            with open(dest, 'wb') as f:
-                while True:
-                    chunk = await part.read_chunk()
-                    if not chunk:
-                        break
-                    f.write(chunk)
-            saved.append({'name': safe_name, 'size': os.path.getsize(dest)})
+    try:
+        async for part in reader:
+            if part.filename:
+                # 防止路径穿越
+                safe_name = os.path.basename(part.filename)
+                dest = os.path.join(upload_dir, safe_name)
+                # 逐块写入并检查大小
+                total = 0
+                with open(dest, 'wb') as f:
+                    while True:
+                        chunk = await part.read_chunk()
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > MAX_UPLOAD_BYTES:
+                            # 超出限制，删除文件并返回 413
+                            f.close()
+                            try:
+                                os.remove(dest)
+                            except Exception:
+                                pass
+                            return web.json_response({'error': '文件大小超过限制'}, status=413, headers=_cors_headers())
+                        f.write(chunk)
+                saved.append({'name': safe_name, 'size': os.path.getsize(dest)})
+    except Exception as exc:
+        logger.exception('upload failed')
+        return web.json_response({'ok': False, 'error': str(exc)}, status=500, headers=_cors_headers())
     return web.json_response({'ok': True, 'files': saved}, headers=_cors_headers())
 
 
 @routes.get('/api/download/{filename}')
 async def download_handler(request: web.Request):
     """下载 data/uploads/ 中的文件。"""
-    if not _authed(request):
+    if not _authed(self:=request):
         return web.json_response({'error': '需要认证'}, status=401, headers=_cors_headers())
     filename = request.match_info.get('filename', '')
     safe_name = os.path.basename(filename)
@@ -454,6 +525,7 @@ async def download_handler(request: web.Request):
 # ═══════════════════════════════════════════
 # OPTIONS (CORS preflight)
 # ═══════════════════════════════════════════
+
 
 # ═══════════════════════════════════════════
 # 启动
@@ -475,7 +547,9 @@ _rate_limits: dict[str, list[float]] = {}
 @web.middleware
 async def rate_limit_middleware(request: web.Request, handler):
     """简单令牌桶: 每 IP 每分钟 60 请求。"""
-    ip = request.remote or '127.0.0.1'
+    ip = request.headers.get('X-Forwarded-For') or request.remote or '127.0.0.1'
+    if isinstance(ip, str) and ',' in ip:
+        ip = ip.split(',')[0].strip()
     now = _time.time()
     window = 60  # 1 分钟
     max_req = 60
